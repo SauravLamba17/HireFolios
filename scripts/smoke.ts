@@ -23,6 +23,15 @@ const jpeg = (tag: string) => new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 
 const mobileFor = (n: number) => `6${String(Date.now()).slice(-6)}${String(n).padStart(3, "0")}`;
 
 let cookie = "";
+// Better Auth: 3 sign-ins per IP per 10 s, counted until 10 s after the last one.
+let signIns: number[] = [];
+async function pace() {
+  const now = Date.now();
+  signIns = signIns.filter((t) => now - t < 10_500);
+  if (signIns.length >= 2) await new Promise((r) => setTimeout(r, 10_700 - (now - Math.max(...signIns))));
+  signIns = signIns.filter((t) => Date.now() - t < 10_500);
+  signIns.push(Date.now());
+}
 async function call(p: string, init: RequestInit & { anon?: boolean } = {}) {
   const headers = new Headers(init.headers);
   if (!init.anon && cookie) headers.set("cookie", cookie);
@@ -73,7 +82,11 @@ const filesOnDisk = (root: string, tenantId: string) => {
 
 async function makeTenant(slug: string) {
   const [t] = await db.insert(s.tenants).values({ name: `Smoke ${slug}`, slug: `smoke-${slug}-${RUN}`, tokenPrefix: "SM" }).returning();
-  await db.insert(s.stages).values(["Registered", "HR screen"].map((name, i) => ({ tenantId: t.id, name, position: i + 1 })));
+  await db.insert(s.stages).values([
+    { tenantId: t.id, name: "Registered", position: 1 },
+    { tenantId: t.id, name: "HR screen", position: 2, isInterview: true, criteria: [{ label: "Communication", required: true }] },
+  ]);
+  await db.insert(s.rejectReasons).values(["Typing speed below requirement", "Notice period too long"].map((label, i) => ({ tenantId: t.id, label, position: i + 1 })));
   await db.insert(s.locations).values({ tenantId: t.id, name: "Smoke office" });
   const jobsRows = await db
     .insert(s.jobs)
@@ -89,8 +102,13 @@ async function cleanup(tenantIds: string[], root: string | null) {
   if (tenantIds.length === 0) return;
   const t = inArray(s.candidateFiles.tenantId, tenantIds);
   await db.delete(s.candidateFiles).where(t);
+  await db.delete(s.scorecards).where(inArray(s.scorecards.tenantId, tenantIds));
+  await db.delete(s.queueEvents).where(inArray(s.queueEvents.tenantId, tenantIds));
   await db.delete(s.consents).where(inArray(s.consents.tenantId, tenantIds));
   await db.delete(s.applications).where(inArray(s.applications.tenantId, tenantIds));
+  await db.delete(s.panels).where(inArray(s.panels.tenantId, tenantIds));
+  await db.delete(s.drives).where(inArray(s.drives.tenantId, tenantIds));
+  await db.delete(s.rejectReasons).where(inArray(s.rejectReasons.tenantId, tenantIds));
   await db.delete(s.candidates).where(inArray(s.candidates.tenantId, tenantIds));
   await db.delete(s.dailyCounters).where(inArray(s.dailyCounters.tenantId, tenantIds));
   await db.delete(s.auditLog).where(inArray(s.auditLog.tenantId, tenantIds));
@@ -125,6 +143,7 @@ async function main() {
     let r = await call(`/api/candidates/lookup?mobile=${m1}`, { anon: true });
     check("lookup signed out → 401", r.status === 401, r.status);
 
+    await pace();
     r = await call("/api/auth/sign-in/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(hr) });
     cookie = r.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
     check("HR signs in", r.status === 200 && cookie.includes("session_token"), r.status);
@@ -251,6 +270,115 @@ async function main() {
 
     r = await call("/api/settings/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "x" }) });
     check("HR can't change settings → 403", r.status === 403, r.status);
+
+    // ---------- Phase 2: drive day ----------
+    const people = {
+      i1: { email: `int1-${RUN}@smoke.example.test`, password: `Smoke-${crypto.randomUUID()}` },
+      hrB: { email: `hrb-${RUN}@smoke.example.test`, password: `Smoke-${crypto.randomUUID()}` },
+      tv: { email: `tv-${RUN}@smoke.example.test`, password: `Smoke-${crypto.randomUUID()}` },
+    };
+    const ids: Record<string, string> = {};
+    await db.transaction(async (tx) => {
+      ids.i1 = (await createStaff(tx, { tenantId: A.tenant.id, name: "Smoke Interviewer", email: people.i1.email, role: "interviewer", password: people.i1.password, temporary: false }))!;
+      ids.hrB = (await createStaff(tx, { tenantId: B.tenant.id, name: "Smoke HR B", email: people.hrB.email, role: "hr", password: people.hrB.password, temporary: false }))!;
+      ids.tv = (await createStaff(tx, { tenantId: A.tenant.id, name: "Smoke Lobby TV", email: people.tv.email, role: "display", password: people.tv.password, temporary: false }))!;
+    });
+    const hrCookie = cookie;
+    const cookies: Record<string, string> = {};
+    for (const [k, who] of Object.entries(people)) {
+      await pace();
+      const res = await call("/api/auth/sign-in/email", { method: "POST", anon: true, headers: { "content-type": "application/json" }, body: JSON.stringify(who) });
+      cookies[k] = res.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+    }
+    const as = (who: string) => (p: string, init: RequestInit = {}) => {
+      cookie = who === "hr" ? hrCookie : cookies[who];
+      return call(p, init);
+    };
+    const drive = (who: string, body: unknown) => as(who)("/api/drive", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const [hrScreen] = await db.select().from(s.stages).where(sql`${s.stages.tenantId} = ${A.tenant.id} and ${s.stages.name} = 'HR screen'`);
+
+    // SSE: tenant A's stream gets A's pings and never B's; pings carry no data.
+    const ctrl = new AbortController();
+    cookie = hrCookie;
+    const sse = await call("/api/live", { signal: ctrl.signal });
+    check("SSE stream opens for HR (text/event-stream)", sse.status === 200 && (sse.headers.get("content-type") ?? "").startsWith("text/event-stream"), sse.status);
+    let streamed = "";
+    const reader = sse.body!.getReader();
+    const pump = (async () => {
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          streamed += new TextDecoder().decode(value);
+        }
+      } catch {
+        // aborted
+      }
+    })();
+    await new Promise((r) => setTimeout(r, 400));
+    const before = (streamed.match(/event: change/g) ?? []).length;
+    r = await drive("hrB", { action: "addPanel", name: "B room", interviewerId: ids.hrB, stageId: hrScreen.id });
+    await new Promise((r) => setTimeout(r, 800));
+    const afterB = (streamed.match(/event: change/g) ?? []).length;
+    check("tenant B's change does not reach tenant A's stream", afterB === before, { before, afterB, bStatus: r.status });
+    r = await drive("hr", { action: "addPanel", name: "Room 1", interviewerId: ids.i1, stageId: hrScreen.id });
+    check("HR adds a panel (Room 1, interviewer, HR screen)", r.status === 200, await r.clone().json());
+    await new Promise((r) => setTimeout(r, 800));
+    const afterA = (streamed.match(/event: change/g) ?? []).length;
+    check("tenant A's own change arrives on its stream", afterA > afterB, { afterB, afterA });
+    check("stream carries no names, tokens or mobiles", !/Smoke|A-0|\b[6-9]\d{9}\b/.test(streamed), streamed.slice(0, 300));
+    ctrl.abort();
+    await pump;
+    r = await as("tv")("/api/live");
+    check("lobby TV login may open the stream", r.status === 200, r.status);
+    await r.body?.cancel();
+
+    // Assign m2 (no talent pool) to Room 1 by hand, then the interviewer rejects with a reason.
+    const [panel] = await db.select().from(s.panels).where(sql`${s.panels.tenantId} = ${A.tenant.id} and ${s.panels.name} = 'Room 1'`);
+    const [m2app] = await db.select().from(s.applications).where(eq(s.applications.clientRequestId, req2.clientRequestId));
+    r = await drive("hr", { action: "assign", panelId: panel.id, applicationId: m2app.id });
+    check("HR assigns a waiting candidate to Room 1", r.status === 200, await r.clone().json());
+    r = await drive("hr", { action: "assign", panelId: panel.id });
+    check("a busy panel can't take a second candidate", r.status === 400, r.status);
+
+    const unassignedPhoto = photoId; // candidate 1 has never been in Room 1
+    const [m2photo] = await db.select({ id: s.candidateFiles.id }).from(s.candidateFiles).where(sql`${s.candidateFiles.candidateId} = ${m2app.candidateId} and ${s.candidateFiles.kind} = 'photo'`);
+    const iv = as("i1");
+    check("interviewer opens the assigned candidate's profile", (await iv(`/dashboard/candidates/${m2app.candidateId}`)).status === 200);
+    check("interviewer gets 404 for a candidate never assigned to them", (await iv(`/dashboard/candidates/${first.candidateId}`)).status === 404);
+    check("interviewer gets 404 for an unassigned candidate's file", (await iv(`/api/files/${unassignedPhoto}`)).status === 404);
+    check("interviewer can open the assigned candidate's photo", (await iv(`/api/files/${m2photo.id}`)).status === 200);
+    check("interviewer has no candidate list (redirect to /interview)", new URL((await iv("/dashboard")).headers.get("location") ?? "x:", BASE).pathname === "/interview");
+    check("interviewer can't act on the drive board (403)", (await drive("i1", { action: "endDay" })).status === 403);
+    check("lobby TV login: candidate files 404, board redirect, intake API 403", (await as("tv")(`/api/files/${m2photo.id}`)).status === 404 && (await as("tv")("/dashboard/drive")).status === 307 && (await as("tv")(`/api/candidates/lookup?mobile=${m1}`)).status === 403);
+
+    const decide = (body: unknown) => iv("/api/interview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    r = await decide({ action: "decide", applicationId: m2app.id, scores: { Communication: 2 }, notes: "", decision: "reject", rejectReason: "Not on the list" });
+    check("reject with a reason that is not on the list → 400", r.status === 400, await r.clone().json());
+    r = await decide({ action: "decide", applicationId: m2app.id, scores: { Communication: 2 }, notes: "slow typing", decision: "reject", rejectReason: "Typing speed below requirement" });
+    check("interviewer rejects with a listed reason", r.status === 200, await r.clone().json());
+    const [m2after] = await db.select().from(s.applications).where(eq(s.applications.id, m2app.id));
+    const days = (a: Date | null, b: Date | null) => (a && b ? Math.round((a.getTime() - b.getTime()) / 86_400_000) : null);
+    check(
+      "reject sets decided_at and purge dates (365 / 180 days)",
+      m2after.outcome === "rejected" && m2after.rejectReason === "Typing speed below requirement" && days(m2after.purgeAfter, m2after.decidedAt) === 365 && days(m2after.photoPurgeAfter, m2after.decidedAt) === 180 && m2after.panelId === null,
+      m2after,
+    );
+    const [pAfter] = await db.select({ status: s.panels.status }).from(s.panels).where(eq(s.panels.id, panel.id));
+    check("submitting frees the panel", pAfter.status === "available", pAfter);
+
+    // Talent-pool candidate (candidate 1 opted in): reject → decided, but no purge dates.
+    const [m1app] = await db.select().from(s.applications).where(eq(s.applications.clientRequestId, req1.clientRequestId));
+    r = await drive("hr", { action: "assign", panelId: panel.id, applicationId: m1app.id });
+    r = await decide({ action: "decide", applicationId: m1app.id, scores: {}, notes: "", decision: "reject", rejectReason: "Notice period too long" });
+    check("a required criterion left unrated → 400", r.status === 400 && /Communication/.test((await r.json()).error), r.status);
+    r = await decide({ action: "decide", applicationId: m1app.id, scores: { Communication: 3 }, notes: "", decision: "reject", rejectReason: "Notice period too long" });
+    const [m1after] = await db.select().from(s.applications).where(eq(s.applications.id, m1app.id));
+    check("talent-pool opt-in: rejected without purge dates", r.status === 200 && m1after.outcome === "rejected" && m1after.decidedAt !== null && m1after.purgeAfter === null && m1after.photoPurgeAfter === null, m1after);
+    check("interviewer may now open candidate 1 (assigned earlier)", (await iv(`/dashboard/candidates/${first.candidateId}`)).status === 200);
+    const audit2 = await db.select().from(s.auditLog).where(eq(s.auditLog.tenantId, A.tenant.id));
+    check("drive actions audited with ids only", audit2.some((a) => a.action === "interview.decision") && audit2.some((a) => a.action === "queue.assign") && audit2.every((a) => !pii.some((p) => JSON.stringify(a.meta ?? {}).includes(p))));
+    cookie = hrCookie;
   } finally {
     await cleanup(created, root);
     const left = created.length ? await db.$count(s.tenants, inArray(s.tenants.id, created)) : 0;

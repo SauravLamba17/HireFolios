@@ -18,6 +18,14 @@ export async function signIn(page: Page, who: { email: string; password: string 
   await page.getByLabel("Email").fill(who.email);
   await page.getByLabel("Password").fill(who.password);
   await page.getByRole("button", { name: "Sign in" }).click();
+  // Another process (e.g. `npm run smoke`) may have used this IP's sign-in budget a moment ago.
+  const limited = page.getByText("Too many attempts");
+  await expect(limited.or(page.locator("header"))).toBeVisible();
+  if (await limited.isVisible()) {
+    await page.waitForTimeout(11_000);
+    recent = [Date.now()];
+    await page.getByRole("button", { name: "Sign in" }).click();
+  }
   await expect(page).not.toHaveURL(/\/login$/);
 }
 
