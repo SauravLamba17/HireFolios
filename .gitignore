@@ -1,0 +1,26 @@
+# dependencies
+/node_modules
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+*.tsbuildinfo
+
+# tests
+/coverage
+/test-results/
+/playwright-report/
+
+# env: keep the example only
+.env
+.env.*
+!.env.example
+
+# uploaded files and local database data (never public, never committed)
+/data
+
+# misc
+.DS_Store
+*.pem
+npm-debug.log*
