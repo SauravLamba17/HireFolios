@@ -2,16 +2,13 @@ import { z } from "zod";
 import { db } from "@/db";
 import { roleEnum } from "@/db/schema";
 import { requireStaffApi } from "@/lib/session";
-import { audit, createStaff } from "@/lib/staff";
+import { audit, createStaff, TempPassword } from "@/lib/staff";
 
 const CreateStaff = z.object({
   name: z.string("Enter a name").trim().min(1, "Enter a name").max(100, "Name is too long"),
   email: z.string("Enter an email").trim().max(254).pipe(z.email("Enter a valid email")),
   role: z.enum(roleEnum.enumValues, "Choose a role"),
-  password: z
-    .string("Enter a temporary password")
-    .min(8, "Temporary password must be at least 8 characters")
-    .max(128, "Temporary password must be at most 128 characters"),
+  password: TempPassword,
 });
 
 export async function POST(req: Request) {
@@ -22,7 +19,7 @@ export async function POST(req: Request) {
   if (!parsed.success) return Response.json({ error: parsed.error.issues[0].message }, { status: 400 });
 
   const id = await db.transaction(async (tx) => {
-    const id = await createStaff(tx, { ...parsed.data, tenantId: staff.tenantId });
+    const id = await createStaff(tx, { ...parsed.data, tenantId: staff.tenantId, temporary: true });
     if (id) {
       await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "user.create", entityType: "user", entityId: id, meta: { role: parsed.data.role } });
     }

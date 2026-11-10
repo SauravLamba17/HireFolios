@@ -2,24 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { send } from "@/lib/send";
 
-type Row = { id: string; name: string; email: string; role: string; active: boolean; added: string };
+type Row = { id: string; name: string; email: string; role: string; active: boolean; mustChangePassword: boolean; added: string };
 type Option = { value: string; label: string };
-
-async function send(url: string, method: "POST" | "PATCH", body: unknown) {
-  try {
-    const res = await fetch(url, {
-      method,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (res.ok) return null;
-    if (res.status === 401) return "Your session ended. Sign in again.";
-    return ((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? "Something went wrong.";
-  } catch {
-    return "Could not reach the server. Check the connection.";
-  }
-}
 
 // No look-alike characters (0/O, 1/l/I) so it can be read out loud.
 function makePassword() {
@@ -33,6 +19,8 @@ export function UsersManager({ users, roles, currentUserId }: { users: Row[]; ro
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [password, setPassword] = useState("");
+  const [resetFor, setResetFor] = useState<Row | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
   const label = (role: string) => roles.find((r) => r.value === role)?.label ?? role;
 
   async function run(fn: () => Promise<string | null>, success: string) {
@@ -60,7 +48,7 @@ export function UsersManager({ users, roles, currentUserId }: { users: Row[]; ro
           role: f.get("role"),
           password: f.get("password"),
         }),
-      `Added ${name}. Give them the temporary password in person; they can change it after signing in.`,
+      `Added ${name}. Give them the temporary password in person; they must choose their own when they first sign in.`,
     );
     if (ok) {
       formEl.reset();
@@ -128,8 +116,52 @@ export function UsersManager({ users, roles, currentUserId }: { users: Row[]; ro
         </form>
       </section>
 
+      {resetFor && (
+        <section className="card" aria-labelledby="reset-h">
+          <h2 id="reset-h" className="mb-1 text-lg font-semibold">Reset password for {resetFor.name}</h2>
+          <p className="mb-4 text-sm text-slate-600">
+            They are signed out everywhere now, and must choose their own password when they sign in with this one.
+          </p>
+          <form
+            className="flex flex-wrap items-end gap-3"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const who = resetFor;
+              const ok = await run(
+                () => send(`/api/users/${who.id}/password`, "POST", { password: resetPassword }),
+                `New temporary password set for ${who.name}. Give it to them in person.`,
+              );
+              if (ok) setResetFor(null);
+            }}
+          >
+            <div className="min-w-64 flex-1">
+              <label htmlFor="reset-password" className="label">New temporary password</label>
+              <div className="flex gap-2">
+                <input
+                  id="reset-password"
+                  type="text"
+                  required
+                  minLength={8}
+                  maxLength={128}
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(e.target.value)}
+                  className="input font-mono"
+                />
+                <button type="button" className="btn btn-secondary" onClick={() => setResetPassword(makePassword())}>
+                  Generate
+                </button>
+              </div>
+            </div>
+            <button type="submit" disabled={busy} className="btn btn-primary">Set temporary password</button>
+            <button type="button" className="btn btn-secondary" onClick={() => setResetFor(null)}>Cancel</button>
+          </form>
+        </section>
+      )}
+
       <section className="card overflow-x-auto p-0" aria-label="Staff list">
-        <table className="w-full min-w-[640px] text-left">
+        <table className="w-full min-w-[760px] text-left">
           <thead className="border-b border-slate-200 bg-slate-50 text-sm text-slate-600">
             <tr>
               <th scope="col" className="px-4 py-3 font-medium">Staff</th>
@@ -180,9 +212,26 @@ export function UsersManager({ users, roles, currentUserId }: { users: Row[]; ro
                     >
                       {u.active ? "Active" : "Deactivated"}
                     </span>
+                    {u.active && u.mustChangePassword && (
+                      <div className="mt-1 text-xs text-amber-800">Temporary password</div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-sm whitespace-nowrap">{u.added}</td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    {!self && u.active && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className="btn btn-secondary mr-2"
+                        onClick={() => {
+                          setResetFor(u);
+                          setResetPassword(makePassword());
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                      >
+                        Reset password
+                      </button>
+                    )}
                     {!self && (
                       <button
                         type="button"

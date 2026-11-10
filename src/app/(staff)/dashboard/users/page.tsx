@@ -11,7 +11,7 @@ export const metadata: Metadata = { title: "Staff" };
 export default async function UsersPage() {
   const staff = await requireStaff("users");
   const rows = await db
-    .select({ id: users.id, name: users.name, email: users.email, role: users.role, active: users.active, createdAt: users.createdAt })
+    .select({ id: users.id, name: users.name, email: users.email, role: users.role, active: users.active, mustChangePassword: users.mustChangePassword, createdAt: users.createdAt })
     .from(users)
     .where(eq(users.tenantId, staff.tenantId))
     .orderBy(asc(users.createdAt));

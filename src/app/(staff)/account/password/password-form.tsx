@@ -3,7 +3,8 @@
 import { useState, type FormEvent } from "react";
 import { authClient } from "@/lib/auth-client";
 
-export function PasswordForm() {
+// forced: temporary password; on success go on to the role's home page (full load, new session cookie).
+export function PasswordForm({ forced, next }: { forced: boolean; next: string }) {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [pending, setPending] = useState(false);
@@ -16,6 +17,7 @@ export function PasswordForm() {
     setError(null);
     setDone(false);
     if (newPassword !== f.get("confirm")) return setError("The new passwords do not match.");
+    if (newPassword === f.get("currentPassword")) return setError("Choose a password different from the current one.");
     setPending(true);
     try {
       const { error } = await authClient.changePassword({
@@ -28,9 +30,14 @@ export function PasswordForm() {
           error.status === 429
             ? "Too many attempts. Wait a minute and try again."
             : error.code === "INVALID_PASSWORD"
-              ? "Current password is wrong."
+              ? forced
+                ? "Temporary password is wrong."
+                : "Current password is wrong."
               : error.message || "Could not change the password.",
         );
+      } else if (forced) {
+        window.location.assign(next);
+        return;
       } else {
         setDone(true);
         formEl.reset();
@@ -44,7 +51,7 @@ export function PasswordForm() {
   return (
     <form onSubmit={onSubmit} className="space-y-5">
       <div>
-        <label htmlFor="currentPassword" className="label">Current password</label>
+        <label htmlFor="currentPassword" className="label">{forced ? "Temporary password" : "Current password"}</label>
         <input id="currentPassword" name="currentPassword" type="password" autoComplete="current-password" required className="input" />
       </div>
       <div>
