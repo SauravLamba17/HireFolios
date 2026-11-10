@@ -6,6 +6,7 @@ import { searchTextFor } from "@/lib/candidate-search";
 import { sniffType, storageKey, sha256, uploadRoot, writeFileUnder, type FileType } from "@/lib/files";
 import { firstIssue, IntakeRequest, MAX_CV_PAGES, MAX_PAGE_BYTES, MAX_PHOTO_BYTES, MAX_UPLOAD_BYTES, type IntakeResult } from "@/lib/intake";
 import { todayIST } from "@/lib/ist";
+import { publish } from "@/lib/live";
 import { lpaToRupees } from "@/lib/money";
 import { requireStaffApi } from "@/lib/session";
 import { audit } from "@/lib/staff";
@@ -193,6 +194,9 @@ export async function POST(req: Request) {
           source: d.source,
           hrNotes: d.hrNotes,
           createdBy: staff.id,
+          // Time of registration = when the token was issued (the counter row lock orders parallel
+          // intakes), not when the transaction began; the drive queue orders first-round walk-ins by it.
+          createdAt: sql`clock_timestamp()`,
         })
         .returning({ id: applications.id });
 
@@ -252,6 +256,7 @@ export async function POST(req: Request) {
     throw e;
   }
 
+  publish(staff.tenantId); // drive board / lobby counts refresh
   const result = await resultFor(staff.tenantId, clientRequestId);
   return Response.json(result, { status: 201 });
 }
