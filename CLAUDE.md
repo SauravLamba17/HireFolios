@@ -40,6 +40,12 @@ Read `PROGRESS.md` first and continue from where it stops.
 | `src/lib/money.ts` | LPA ↔ whole rupees per year |
 | `src/lib/files.ts` | Candidate files under `UPLOAD_DIR` (absolute path), type sniffing |
 | `src/lib/candidate-search.ts` | Candidate list: URL filters, WHERE builder (tenant first), `search_text` for full-text |
+| `src/lib/flow.ts` | Stage / outcome rules (pure, unit-tested): next round, Selected, hold, reject, purge dates, assign-next order, wait estimate |
+| `src/lib/drive.ts` | Drive day: today's drive, board state, panels, assign, decisions, overrides (one transaction each) |
+| `src/lib/live.ts`, `src/app/api/live/` | Server-Sent Events: per-tenant "change" pings only (no data); pages re-read their own state |
+| `src/lib/access.ts` | Interviewers see only candidates they were called to interview (pages and files) |
+| `src/lib/api.ts` | `act()`: transaction + live ping + rule errors as 400/404 |
+| `src/app/(staff)/dashboard/drive/`, `(staff)/interview/`, `tv/` | Drive board (HR), interviewer workspace, lobby TV (display role) |
 | `src/app/(staff)/intake/` | Tablet wizard: Mobile → Details → Consent → CV → Photo → Save → Token |
 | `src/app/(staff)/dashboard/` | Candidate list + search, `candidates/[id]` profile, `settings`, `users` |
 | `src/app/api/` | `intake`, `candidates/lookup`, `files/[id]`, `settings/*`, `users/*` |
@@ -60,6 +66,12 @@ Read `PROGRESS.md` first and continue from where it stops.
 - Candidate writes must also write `search_text` (`searchTextFor` in `candidate-search.ts`).
 - Ids from URLs: check with `isUuid` (`src/db/index.ts`) and answer 404 for other tenants' ids.
 - Pick-list values are stored as their text; add options in `src/lib/options.ts`, never inline.
+- Stages, scorecard criteria and reject reasons live in the database (Settings), not in code; the seed only
+  fills an empty tenant.
+- Every queue move goes through `src/lib/drive.ts` (writes `queue_events` + `audit_log`), via `act()` so live
+  screens refresh. Outcome dates come from `outcomeDates()` in `flow.ts`.
+- Raw `db.execute(sql...)` rows return timestamps as strings: convert with `toDate` (drive.ts) before date maths.
+- The lobby TV (`display` role) must never receive names, photos or mobiles.
 
 ## Commands
 

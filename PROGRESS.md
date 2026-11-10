@@ -1,6 +1,6 @@
 # Progress
 
-Phases 2–6 are a proposed outline; adjust before starting each one.
+Phases 3–6 are a proposed outline; adjust before starting each one.
 
 ## Phase 0 — Setup + login ✅ (2026-11-10)
 
@@ -66,17 +66,43 @@ Phases 2–6 are a proposed outline; adjust before starting each one.
 - Still open from Phase 0: Docker not installed on the dev PC, `npm audit` findings in build tools (fix needs Next 16),
   staff emails unique across tenants, in-memory sign-in rate limit, staff can rename themselves via `update-user`.
 
-## Phase 2 — Queue and rounds
+## Phase 2 — Drive day + interviews ✅ (2026-11-10)
 
-- [ ] Live queue by stage; call next; move to next stage; `queue_events`
-- [ ] Outcomes (selected / rejected with a reason from `REJECT_REASONS` / on hold / withdrawn / no show)
-- [ ] Interviewer access to their candidates (list + profile)
-- [ ] Setup screens: stages, panels, devices (locations and jobs are done)
+- [x] Migration `0003_drive_day_interviews` (adds only): stage interview flag + scorecard criteria + sample flag,
+      `reject_reasons` table, tenant average interview minutes, drive close, panel drive/interviewer/status,
+      application panel/decided/purge dates, queue event interviewer + note (+ `returned` event), scorecard decision,
+      `display` role, one-candidate-per-panel unique index, one drive per location per day
+- [x] Settings (admin): stages (rename, reorder, activate, interview round, criteria with "required"), reject reasons,
+      average interview minutes; sample defaults flagged until saved; all audited
+- [x] Drives auto-created per IST day and location; panels (room, interviewer, round, available / busy / away / closed)
+- [x] `/dashboard/drive`: waiting by round (photo, token, minutes waiting, wait estimate or "—", cooldown/duplicate
+      for HR), in interview by panel with timer, done today; Assign next, manual pick, back to waiting, no-show,
+      walked away, end of day summary / reopen. Managers watch read-only
+- [x] Live updates: SSE (tenant-scoped pings), 5 s polling while disconnected, automatic reconnect
+- [x] `/tv` lobby screen (display role): now calling + 4 previous calls + waiting count, tokens and rooms only, chime toggle
+- [x] `/interview`: panel status, candidate + RCM + CV side by side, earlier rounds, 1–5 scorecard, Pass / Hold / Reject (listed reason)
+- [x] Stage/outcome rules in `src/lib/flow.ts` (unit-tested); purge dates on reject / no-show / walked away unless talent pool
+- [x] Manager/admin override on the profile (reason required, audited); HR resumes on-hold candidates
+- [x] Profile: per-visit rounds (interviewer, scores, decision, reason, time) and timeline
+- [x] Interviewers only see candidates assigned to them (profile + files, enforced on the server)
+- [x] Verified: tsc, lint, build, vitest (96), Playwright (14 incl. drive day in 5 browser contexts), smoke (75, localhost + LAN + fresh DB), QA (43 + 4 reconnect)
 
-## Phase 3 — Scorecards and decisions
+### Known issues / left open after Phase 2
 
-- [ ] Interviewer scorecards per stage (1–5 overall, recommendation, comments), shown on the profile
-- [ ] Manager round, offer and joined tracking
+- **To confirm with Simplen HR:** the stages and which are interview rounds, the scorecard criteria per round
+  (sample: Communication, Process knowledge, Typing / voice, Attitude & stability), required criteria, the reject
+  reasons, and the average interview minutes (not set: the board shows "—" until 3 interviews finish each day).
+- The lobby TV signs in with a `display` account; like every session it lasts 12 hours, so the TV needs signing in each morning.
+- Live updates use an in-process event bus: fine for the single office PC; several app instances would need Postgres LISTEN/NOTIFY.
+- Purge dates are set but nothing deletes data yet (retention job is Phase 5). No-show and walked-away also get purge dates.
+- Panel rows are rooms reused across days (unique room name per tenant); history is kept in `queue_events` and scorecards.
+- Wait estimates and the "minutes waiting" timer are approximate by design (position × average ÷ panels).
+- "End of day" sends anyone still in a room back to waiting; they stay in progress until HR marks them.
+
+## Phase 3 — Offers and joining
+
+- [ ] Offer letters, joined / not joined tracking after Selected
+- [ ] Reports from scorecards (pass rates by round, reasons)
 
 ## Phase 4 — Candidate records
 
