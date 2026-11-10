@@ -40,7 +40,9 @@ export const outcomeEnum = pgEnum("application_outcome", [
   "withdrawn",
   "no_show",
 ]);
-export const fileKindEnum = pgEnum("candidate_file_kind", ["photo", "cv_page"]);
+// photo: live photo. cv_page: CV page photographed on the tablet. cv_upload: CV file (PDF/image) uploaded as is.
+export const fileKindEnum = pgEnum("candidate_file_kind", ["photo", "cv_page", "cv_upload"]);
+export const jobStatusEnum = pgEnum("job_status", ["open", "paused", "closed"]);
 export const queueEventEnum = pgEnum("queue_event_type", [
   "queued",
   "called",
@@ -82,6 +84,8 @@ export const users = pgTable(
     role: roleEnum("role").notNull(),
     tenantId: tenantId(),
     active: boolean("active").notNull().default(true),
+    // Set when an admin creates the account or resets its password; cleared when the user changes it.
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -190,10 +194,20 @@ export const jobs = pgTable(
     id: id(),
     tenantId: tenantId(),
     title: text("title").notNull(),
-    active: boolean("active").notNull().default(true),
+    status: jobStatusEnum("status").notNull().default("open"), // only "open" jobs are offered at intake
+    active: boolean("active").notNull().default(true), // legacy, kept equal to status = 'open'
+    openings: integer("openings"),
+    minExperienceYears: integer("min_experience_years"),
+    maxExperienceYears: integer("max_experience_years"),
+    requiredCertifications: text("required_certifications").array().notNull().default(sql`'{}'::text[]`),
+    sample: boolean("sample").notNull().default(false), // added by the seed, not yet confirmed by an admin
     createdAt: createdAt(),
   },
-  (t) => [unique("jobs_tenant_title_uq").on(t.tenantId, t.title)],
+  (t) => [
+    unique("jobs_tenant_title_uq").on(t.tenantId, t.title),
+    check("jobs_numbers_ck", sql`coalesce(${t.openings}, 0) >= 0 and coalesce(${t.minExperienceYears}, 0) >= 0 and coalesce(${t.maxExperienceYears}, 0) >= 0`),
+    check("jobs_experience_range_ck", sql`${t.minExperienceYears} is null or ${t.maxExperienceYears} is null or ${t.minExperienceYears} <= ${t.maxExperienceYears}`),
+  ],
 );
 
 export const drives = pgTable(
@@ -245,12 +259,25 @@ export const candidates = pgTable(
     currentCtc: integer("current_ctc"), // whole rupees per year
     expectedCtc: integer("expected_ctc"), // whole rupees per year
     noticeDays: integer("notice_days"),
+    languages: text("languages").array().notNull().default(sql`'{}'::text[]`),
+    skills: text("skills"),
+    // RCM (US healthcare revenue cycle) profile. Values come from src/lib/options.ts.
+    certifications: text("certifications").array().notNull().default(sql`'{}'::text[]`),
+    codingSpecialties: text("coding_specialties").array().notNull().default(sql`'{}'::text[]`),
+    ehrSoftware: text("ehr_software").array().notNull().default(sql`'{}'::text[]`),
+    nightShiftOk: boolean("night_shift_ok"),
+    voiceProcess: boolean("voice_process"),
+    typingWpm: integer("typing_wpm"), // entered by HR for now
+    // Written by the app on every save (src/lib/candidate-search.ts); feeds full-text search.
+    searchText: text("search_text").notNull().default(""),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     unique("candidates_tenant_mobile_uq").on(t.tenantId, t.mobile),
     index("candidates_full_name_trgm_idx").using("gin", t.fullName.op("gin_trgm_ops")),
+    index("candidates_search_fts_idx").using("gin", sql`to_tsvector('simple', ${t.searchText})`),
+    check("candidates_typing_wpm_ck", sql`${t.typingWpm} is null or ${t.typingWpm} between 1 and 250`),
     check("candidates_mobile_ck", sql`${t.mobile} ~ '^[6-9][0-9]{9}$'`),
     check(
       "candidates_money_ck",
@@ -282,6 +309,8 @@ export const applications = pgTable(
     outcome: outcomeEnum("outcome").notNull().default("in_progress"),
     rejectReason: text("reject_reason"),
     clientRequestId: uuid("client_request_id").notNull(), // idempotency key from the tablet
+    source: text("source"), // how the candidate heard about the opening (src/lib/options.ts)
+    hrNotes: text("hr_notes"),
     createdBy: text("created_by").references(() => users.id),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -392,6 +421,10 @@ export const consents = pgTable(
       .references(() => candidates.id, { onDelete: "cascade" }),
     applicationId: uuid("application_id").references(() => applications.id),
     noticeVersion: text("notice_version").notNull(),
+    language: text("language").notNull().default("en"), // language the notice was shown in
+    // Purposes. Assessing this application is the required one; these two are optional extras.
+    talentPool: boolean("talent_pool").notNull().default(false),
+    whatsapp: boolean("whatsapp").notNull().default(false),
     acceptedAt: ts("accepted_at").notNull().defaultNow(),
     deviceId: uuid("device_id").references(() => devices.id),
     recordedBy: text("recorded_by").references(() => users.id),

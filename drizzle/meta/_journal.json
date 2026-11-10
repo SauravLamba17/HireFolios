@@ -15,6 +15,13 @@
       "when": 1794308819978,
       "tag": "0001_init_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794316103032,
+      "tag": "0002_rcm_fields_settings_intake",
+      "breakpoints": true
     }
   ]
 }

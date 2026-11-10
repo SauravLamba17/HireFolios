@@ -15,7 +15,21 @@ const STAGES = [
   "Offer",
   "Joined",
 ];
-const JOBS = ["AR Caller", "Medical Biller", "Medical Coder", "Other"];
+// Sample positions for Simplen HR to confirm in Settings (flagged `sample` until saved there).
+// Missing titles are added; existing jobs are never changed or deleted.
+const JOBS = [
+  "Medical Coder",
+  "Medical Biller / Charge Entry",
+  "Payment Poster",
+  "AR Caller / AR Analyst",
+  "Denial Management Executive",
+  "Credentialing Specialist",
+  "Eligibility & Prior Authorization",
+  "Patient Support / Front Desk (US voice)",
+  "Team Lead / QA",
+  "Digital Marketing Executive",
+  "Other / General",
+];
 const SAMPLE_LOCATION = "Main office (sample, rename me)";
 
 async function main() {
@@ -29,7 +43,7 @@ async function main() {
     .onConflictDoNothing();
   await db
     .insert(jobs)
-    .values(JOBS.map((title) => ({ tenantId: tenant.id, title })))
+    .values(JOBS.map((title) => ({ tenantId: tenant.id, title, sample: true })))
     .onConflictDoNothing();
   await db
     .insert(locations)
@@ -58,7 +72,8 @@ async function main() {
         name: process.env.SEED_ADMIN_NAME?.trim() || "Admin",
         email,
         role: "admin",
-        password,
+        password, // chosen by whoever runs the seed, so no forced change
+        temporary: false,
       });
       if (!id) throw new Error("admin email already taken");
       await audit(tx, { tenantId: tenant.id, actorUserId: null, action: "user.create", entityType: "user", entityId: id, meta: { role: "admin", via: "seed" } });
