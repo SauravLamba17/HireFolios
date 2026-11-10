@@ -10,6 +10,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const { ROLES, can, homePath, requireStaff, requireStaffApi } = await import("./session");
+type Permission = import("./session").Permission;
 const { roleEnum } = await import("@/db/schema");
 const { requestOrigin } = await import("./origin");
 
@@ -35,7 +36,7 @@ describe("role rules", () => {
     expect(can("manager", "intake")).toBe(false);
   });
 
-  it("candidate list for admin, HR and manager; not interviewers yet", () => {
+  it("candidate list for admin, HR and manager; not interviewers", () => {
     expect(["admin", "hr", "manager"].every((r) => can(r as never, "candidates"))).toBe(true);
     expect(can("interviewer", "candidates")).toBe(false);
   });
@@ -45,17 +46,34 @@ describe("role rules", () => {
     for (const r of ["hr", "interviewer", "manager"] as const) expect(can(r, "settings")).toBe(false);
   });
 
-  it("HR lands on intake, everyone else on the dashboard", () => {
+  it("each role has its own home page", () => {
     expect(homePath("hr")).toBe("/intake");
     expect(homePath("admin")).toBe("/dashboard");
-    expect(homePath("interviewer")).toBe("/dashboard");
+    expect(homePath("interviewer")).toBe("/interview");
     expect(homePath("manager")).toBe("/dashboard");
+    expect(homePath("display")).toBe("/tv");
   });
 
   it("every role can open its own home page (no redirect loop)", () => {
-    for (const role of roleEnum.enumValues) {
-      expect(can(role, homePath(role) === "/intake" ? "intake" : "dashboard")).toBe(true);
-    }
+    const needs: Record<string, Permission> = { "/intake": "intake", "/dashboard": "dashboard", "/interview": "interview", "/tv": "tv" };
+    for (const role of roleEnum.enumValues) expect(can(role, needs[homePath(role)])).toBe(true);
+  });
+
+  it("the lobby TV login can only open /tv", () => {
+    expect(ROLES.display).toEqual(["tv"]);
+  });
+
+  it("drive board: HR and admin act, managers only watch; interviewers neither", () => {
+    expect(["admin", "hr", "manager"].every((r) => can(r as never, "drive"))).toBe(true);
+    expect(can("manager", "driveManage")).toBe(false);
+    expect(can("hr", "driveManage") && can("admin", "driveManage")).toBe(true);
+    expect(can("interviewer", "drive")).toBe(false);
+  });
+
+  it("overrides are for managers and admins; interviewers have no list or settings", () => {
+    expect(can("manager", "override") && can("admin", "override")).toBe(true);
+    expect(can("hr", "override") || can("interviewer", "override")).toBe(false);
+    for (const p of ["dashboard", "candidates", "settings", "users", "intake"] as const) expect(can("interviewer", p)).toBe(false);
   });
 });
 

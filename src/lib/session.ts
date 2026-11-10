@@ -6,15 +6,26 @@ import { auth } from "@/lib/auth";
 import { requestOrigin } from "@/lib/origin";
 
 export type Role = (typeof roleEnum.enumValues)[number];
-export type Permission = "dashboard" | "candidates" | "intake" | "settings" | "users";
+export type Permission =
+  | "dashboard" // candidate list / dashboard home
+  | "candidates" // any candidate's profile and files (interviewers: only their own, see src/lib/access.ts)
+  | "intake"
+  | "settings"
+  | "users"
+  | "drive" // see today's drive board
+  | "driveManage" // act on it: panels, assign, no-show, end of day
+  | "interview" // /interview workspace (needs a panel on today's drive)
+  | "override" // move any stage / change outcome, with a reason
+  | "resume" // put an on-hold candidate back in the queue
+  | "tv"; // lobby screen
 
 // The one permission map. Every role must be listed (TypeScript enforces it).
-// Interviewers get candidate access with the queue in Phase 2.
 export const ROLES = {
-  admin: ["dashboard", "candidates", "intake", "settings", "users"],
-  hr: ["dashboard", "candidates", "intake"],
-  interviewer: ["dashboard"],
-  manager: ["dashboard", "candidates"],
+  admin: ["dashboard", "candidates", "intake", "settings", "users", "drive", "driveManage", "interview", "override", "resume", "tv"],
+  hr: ["dashboard", "candidates", "intake", "drive", "driveManage", "resume", "tv"],
+  interviewer: ["interview"],
+  manager: ["dashboard", "candidates", "drive", "interview", "override", "resume", "tv"],
+  display: ["tv"],
 } as const satisfies Record<Role, readonly Permission[]>;
 
 export const ROLE_LABELS: Record<Role, string> = {
@@ -22,6 +33,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   hr: "HR",
   interviewer: "Interviewer",
   manager: "Manager",
+  display: "Lobby TV (display)",
 };
 
 export const isRole = (v: unknown): v is Role => typeof v === "string" && v in ROLES;
@@ -29,7 +41,8 @@ export const isRole = (v: unknown): v is Role => typeof v === "string" && v in R
 export const can = (role: Role, permission: Permission) =>
   (ROLES[role] as readonly Permission[]).includes(permission);
 
-export const homePath = (role: Role) => (role === "hr" ? "/intake" : "/dashboard");
+const HOME: Record<Role, string> = { admin: "/dashboard", hr: "/intake", interviewer: "/interview", manager: "/dashboard", display: "/tv" };
+export const homePath = (role: Role) => HOME[role];
 
 export type Staff = {
   id: string;

@@ -8,6 +8,8 @@ import { SignOutButton } from "./sign-out-button";
 const LINKS: { href: string; label: string; permission: Permission; also?: string }[] = [
   { href: "/dashboard", label: "Candidates", permission: "candidates", also: "/dashboard/candidates/" },
   { href: "/intake", label: "+ New candidate", permission: "intake" },
+  { href: "/dashboard/drive", label: "Drive", permission: "drive" },
+  { href: "/interview", label: "Interview", permission: "interview" },
   { href: "/dashboard/settings", label: "Settings", permission: "settings" },
   { href: "/dashboard/users", label: "Staff", permission: "users" },
 ];
