@@ -2,20 +2,39 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { db, isUuid } from "@/db";
-import { applications, candidateFiles, candidates, consents, jobs, stages, users } from "@/db/schema";
+import { applications, candidateFiles, candidates, consents, jobs, rejectReasons, stages, users } from "@/db/schema";
 import { StatusBadge, Tag } from "@/components/status-badge";
-import { formatDateTimeIST, formatDayIST } from "@/lib/ist";
+import { formatDateIST, formatDateTimeIST, formatDayIST } from "@/lib/ist";
 import { formatLpa } from "@/lib/money";
 import { NOTICE_LANGUAGES } from "@/lib/notice";
-import { experienceLabel, noticeLabel } from "@/lib/options";
-import { requireStaff } from "@/lib/session";
+import { canViewCandidate } from "@/lib/access";
+import { DECISION_LABELS, experienceLabel, noticeLabel } from "@/lib/options";
+import { can, requireStaff } from "@/lib/session";
+import { OverrideForm, ResumeButton } from "./profile-actions";
 import { audit } from "@/lib/staff";
 
 export const metadata: Metadata = { title: "Candidate" };
 
 const yesNo = (v: boolean | null) => (v === null ? null : v ? "Yes" : "No");
+
+function eventText(e: { event: string; stage: string | null; room: string | null; interviewer: string | null }) {
+  switch (e.event) {
+    case "called":
+      return `Called to ${e.room ?? "a panel"}${e.interviewer ? ` (${e.interviewer})` : ""} for ${e.stage}`;
+    case "completed":
+      return `Finished ${e.stage}`;
+    case "queued":
+      return `Waiting for ${e.stage}`;
+    case "returned":
+      return `Back to waiting from ${e.room ?? "a panel"}`;
+    case "skipped":
+      return "Left the queue";
+    default:
+      return e.event;
+  }
+}
 
 function Facts({ items }: { items: [string, React.ReactNode][] }) {
   return (
@@ -31,15 +50,17 @@ function Facts({ items }: { items: [string, React.ReactNode][] }) {
 }
 
 export default async function CandidatePage({ params }: { params: Promise<{ id: string }> }) {
-  const staff = await requireStaff("candidates");
+  const staff = await requireStaff();
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const tenantId = staff.tenantId;
+  // Interviewers: only candidates they interviewed. Anyone without access gets the same 404 as a missing id.
+  if (!(await canViewCandidate(staff, id))) notFound();
 
   const c = await db.query.candidates.findFirst({ where: and(eq(candidates.id, id), eq(candidates.tenantId, tenantId)) });
   if (!c) notFound(); // another tenant's id looks exactly like a missing one
 
-  const [visits, files, consentRows] = await Promise.all([
+  const [visits, files, consentRows, events, cards, stageRows, reasonRows] = await Promise.all([
     db
       .select({
         id: applications.id,
@@ -49,6 +70,9 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
         stage: stages.name,
         outcome: applications.outcome,
         rejectReason: applications.rejectReason,
+        decidedAt: applications.decidedAt,
+        purgeAfter: applications.purgeAfter,
+        photoPurgeAfter: applications.photoPurgeAfter,
         source: applications.source,
         hrNotes: applications.hrNotes,
         by: users.name,
@@ -69,7 +93,33 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
       .from(consents)
       .where(and(eq(consents.tenantId, tenantId), eq(consents.candidateId, id)))
       .orderBy(desc(consents.acceptedAt)),
+    db.execute<{ application_id: string; event: string; created_at: Date; note: string | null; stage: string | null; room: string | null; interviewer: string | null; actor: string | null }>(sql`
+      select e.application_id, e.event, e.created_at, e.note, s.name as stage, p.name as room, iv.name as interviewer, ac.name as actor
+      from queue_events e
+      join applications a on a.id = e.application_id
+      left join stages s on s.id = e.stage_id
+      left join panels p on p.id = e.panel_id
+      left join users iv on iv.id = e.interviewer_id
+      left join users ac on ac.id = e.actor_user_id
+      where a.tenant_id = ${tenantId} and a.candidate_id = ${id}
+      order by e.created_at`),
+    db.execute<{ application_id: string; stage: string; interviewer: string; scores: Record<string, number>; overall: number | null; decision: string | null; reject_reason: string | null; comments: string | null; updated_at: Date }>(sql`
+      select sc.application_id, s.name as stage, u.name as interviewer, sc.scores, sc.overall, sc.decision, sc.reject_reason, sc.comments, sc.updated_at
+      from scorecards sc
+      join applications a on a.id = sc.application_id
+      join stages s on s.id = sc.stage_id
+      join users u on u.id = sc.interviewer_id
+      where a.tenant_id = ${tenantId} and a.candidate_id = ${id}
+      order by sc.updated_at`),
+    db.select({ id: stages.id, name: stages.name }).from(stages).where(eq(stages.tenantId, tenantId)).orderBy(asc(stages.position)),
+    db
+      .select({ label: rejectReasons.label })
+      .from(rejectReasons)
+      .where(and(eq(rejectReasons.tenantId, tenantId), eq(rejectReasons.active, true)))
+      .orderBy(asc(rejectReasons.position)),
   ]);
+  const canOverride = can(staff.role, "override");
+  const canResume = can(staff.role, "resume");
 
   await audit(db, { tenantId, actorUserId: staff.id, action: "candidate.view", entityType: "candidate", entityId: id });
 
@@ -84,7 +134,7 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
 
   return (
     <div className="space-y-6">
-      <Link href="/dashboard" className="text-blue-700 underline">← All candidates</Link>
+      {can(staff.role, "dashboard") && <Link href="/dashboard" className="text-blue-700 underline">← All candidates</Link>}
 
       <section className="card flex flex-wrap gap-6" aria-labelledby="name-h">
         {photo ? (
@@ -142,42 +192,77 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
         />
       </section>
 
-      <section className="card space-y-4 overflow-x-auto" aria-labelledby="vis-h">
+      <section className="space-y-4" aria-labelledby="vis-h">
         <h2 id="vis-h" className="text-lg font-semibold">Visits ({visits.length})</h2>
-        {visits.length === 0 ? (
-          <p className="text-slate-600">No visits.</p>
-        ) : (
-          <table className="w-full min-w-[640px] text-left">
-            <thead className="border-b border-slate-200 text-sm text-slate-600">
-              <tr>
-                <th className="py-2 pr-4 font-medium">Date</th>
-                <th className="py-2 pr-4 font-medium">Token</th>
-                <th className="py-2 pr-4 font-medium">Position</th>
-                <th className="py-2 pr-4 font-medium">Stage / outcome</th>
-                <th className="py-2 font-medium">Notes</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 align-top">
-              {visits.map((v) => (
-                <tr key={v.id}>
-                  <td className="py-3 pr-4 whitespace-nowrap">{formatDayIST(v.day)}</td>
-                  <td className="py-3 pr-4 font-medium whitespace-nowrap">{v.token}</td>
-                  <td className="py-3 pr-4">{v.job}</td>
-                  <td className="py-3 pr-4">
-                    <StatusBadge outcome={v.outcome} stage={v.stage} />
-                    {v.rejectReason && <div className="mt-1 text-sm text-slate-600">Reason: {v.rejectReason}</div>}
-                  </td>
-                  <td className="py-3 text-sm text-slate-700">
-                    {v.hrNotes && <p className="whitespace-pre-line">{v.hrNotes}</p>}
-                    <p className="text-slate-500">
-                      {[v.source && `Source: ${v.source}`, v.by && `Registered by ${v.by}`].filter(Boolean).join(" · ")}
-                    </p>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        {visits.length === 0 && <p className="card text-slate-600">No visits.</p>}
+        {visits.map((v, vi) => {
+          const rounds = [...cards].filter((r) => r.application_id === v.id);
+          const log = [...events].filter((e) => e.application_id === v.id);
+          return (
+            <article key={v.id} className="card space-y-4" aria-label={`Visit ${v.token}, ${formatDayIST(v.day)}`}>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <h3 className="font-semibold whitespace-nowrap">
+                  {formatDayIST(v.day)} · {v.token}
+                </h3>
+                <span className="text-slate-700">{v.job}</span>
+                <StatusBadge outcome={v.outcome} stage={v.stage} />
+                {v.rejectReason && <span className="text-sm text-slate-700">Reason: {v.rejectReason}</span>}
+              </div>
+              <p className="text-sm text-slate-600">
+                {[
+                  v.decidedAt && `Decided ${formatDateTimeIST(v.decidedAt)}`,
+                  v.purgeAfter && `data kept until ${formatDateIST(v.purgeAfter)}`,
+                  v.photoPurgeAfter && `photo until ${formatDateIST(v.photoPurgeAfter)}`,
+                  v.decidedAt && !v.purgeAfter && v.outcome !== "selected" && "talent pool: no purge date",
+                  v.source && `Source: ${v.source}`,
+                  v.by && `Registered by ${v.by}`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+              {v.hrNotes && <p className="rounded-lg bg-slate-50 p-3 text-sm whitespace-pre-line">HR notes: {v.hrNotes}</p>}
+
+              <div className="space-y-2">
+                <h4 className="text-sm font-semibold text-slate-700">Rounds</h4>
+                {rounds.length === 0 && <p className="text-sm text-slate-500">No interview rounds yet.</p>}
+                <ol className="space-y-2">
+                  {rounds.map((r, i) => (
+                    <li key={i} className="rounded-lg border border-slate-200 p-3 text-sm">
+                      <p className="font-medium">
+                        {r.stage} · {r.interviewer} · {r.decision ? DECISION_LABELS[r.decision] : "—"}
+                        {r.reject_reason && ` (${r.reject_reason})`}
+                        <span className="font-normal text-slate-500"> · {formatDateTimeIST(new Date(r.updated_at))}</span>
+                      </p>
+                      <p className="text-slate-700">
+                        {Object.entries(r.scores).map(([k, n]) => `${k} ${n}/5`).join(" · ") || "No scores"}
+                        {r.overall && ` · overall ${r.overall}/5`}
+                      </p>
+                      {r.comments && <p className="mt-1 whitespace-pre-line text-slate-600">{r.comments}</p>}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+
+              {log.length > 0 && (
+                <details className="text-sm">
+                  <summary className="cursor-pointer font-semibold text-slate-700">Timeline ({log.length})</summary>
+                  <ol className="mt-2 space-y-1 border-l-2 border-slate-200 pl-4">
+                    {log.map((e, i) => (
+                      <li key={i}>
+                        <span className="text-slate-500">{formatDateTimeIST(new Date(e.created_at))}</span> · {eventText(e)}
+                        {e.note && <span className="text-slate-600"> · {e.note}</span>}
+                        {e.actor && <span className="text-slate-500"> · by {e.actor}</span>}
+                      </li>
+                    ))}
+                  </ol>
+                </details>
+              )}
+
+              {vi === 0 && canResume && v.outcome === "on_hold" && <ResumeButton applicationId={v.id} />}
+              {vi === 0 && canOverride && <OverrideForm applicationId={v.id} stages={stageRows} reasons={reasonRows.map((r) => r.label)} />}
+            </article>
+          );
+        })}
       </section>
 
       <section className="card space-y-4" aria-labelledby="cv-h">
