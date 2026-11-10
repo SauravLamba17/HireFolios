@@ -96,7 +96,7 @@ export const LANGUAGES = [
   "Other",
 ] as const;
 
-// Used when an interview round rejects a candidate (Phase 2).
+// Starting list for Settings → Reject reasons (the live list is the reject_reasons table).
 export const REJECT_REASONS = [
   "Spoken English / communication",
   "Typing speed below requirement",
@@ -116,14 +116,20 @@ export const noticeLabel = (days: number | null) =>
 // Coding specialties apply to coding jobs, or once any certification is picked.
 export const isCodingJob = (title: string) => /\bcod(er|ing)\b/i.test(title);
 
+// Sample scorecard criteria for each interview round, each rated 1–5 (editable per stage in Settings).
+export const SAMPLE_CRITERIA = ["Communication", "Process knowledge", "Typing / voice", "Attitude & stability"] as const;
+
+// "withdrawn" is shown as "Walked away" on the drive board: the candidate left before a decision.
 export const OUTCOME_LABELS: Record<string, string> = {
   in_progress: "In progress",
   selected: "Selected",
   rejected: "Rejected",
   on_hold: "On hold",
-  withdrawn: "Withdrawn",
+  withdrawn: "Walked away",
   no_show: "No show",
 };
+
+export const DECISION_LABELS: Record<string, string> = { pass: "Pass", hold: "Hold", reject: "Reject" };
 
 export function experienceLabel(months: number | null) {
   if (months === null) return null;

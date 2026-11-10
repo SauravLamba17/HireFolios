@@ -1,15 +1,16 @@
 import type { Metadata } from "next";
 import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { jobs, locations } from "@/db/schema";
+import { jobs, locations, rejectReasons, stages, tenants } from "@/db/schema";
 import { requireStaff } from "@/lib/session";
+import { DriveSettings } from "./drive-settings";
 import { SettingsManager } from "./settings-manager";
 
 export const metadata: Metadata = { title: "Settings" };
 
 export default async function SettingsPage() {
   const staff = await requireStaff("settings");
-  const [jobRows, locationRows] = await Promise.all([
+  const [jobRows, locationRows, stageRows, reasonRows, [tenant]] = await Promise.all([
     db
       .select({
         id: jobs.id,
@@ -30,6 +31,22 @@ export default async function SettingsPage() {
       .from(locations)
       .where(eq(locations.tenantId, staff.tenantId))
       .orderBy(asc(locations.createdAt)),
+    db
+      .select({ id: stages.id, name: stages.name, active: stages.active, isInterview: stages.isInterview, criteria: stages.criteria, sample: stages.sample })
+      .from(stages)
+      .where(eq(stages.tenantId, staff.tenantId))
+      .orderBy(asc(stages.position)),
+    db
+      .select({ id: rejectReasons.id, label: rejectReasons.label, active: rejectReasons.active, sample: rejectReasons.sample })
+      .from(rejectReasons)
+      .where(eq(rejectReasons.tenantId, staff.tenantId))
+      .orderBy(asc(rejectReasons.position)),
+    db.select({ avg: tenants.avgInterviewMinutes }).from(tenants).where(eq(tenants.id, staff.tenantId)),
   ]);
-  return <SettingsManager jobs={jobRows} locations={locationRows} />;
+  return (
+    <div className="space-y-8">
+      <SettingsManager jobs={jobRows} locations={locationRows} />
+      <DriveSettings stages={stageRows} reasons={reasonRows} avgMinutes={tenant?.avg ?? null} />
+    </div>
+  );
 }

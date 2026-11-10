@@ -2,18 +2,20 @@
 // Run with `npm run db:seed` (loads .env if present).
 import { and, eq } from "drizzle-orm";
 import { db, pgClient } from "@/db";
-import { jobs, locations, stages, tenants, users } from "@/db/schema";
+import { jobs, locations, rejectReasons, stages, tenants, users } from "@/db/schema";
+import { REJECT_REASONS, SAMPLE_CRITERIA } from "@/lib/options";
 import { audit, createStaff } from "@/lib/staff";
 
 const TENANT = { name: "Simplen Billing e-Services", slug: "simplen", tokenPrefix: "SB" };
+// Sample pipeline for Simplen HR to confirm in Settings. Interview rounds get the sample criteria.
 const STAGES = [
-  "Registered",
-  "HR screen",
-  "Typing/voice test",
-  "Ops round",
-  "Manager round",
-  "Offer",
-  "Joined",
+  { name: "Registered", isInterview: false },
+  { name: "HR screen", isInterview: true },
+  { name: "Typing/voice test", isInterview: true },
+  { name: "Ops round", isInterview: true },
+  { name: "Manager round", isInterview: true },
+  { name: "Offer", isInterview: false },
+  { name: "Joined", isInterview: false },
 ];
 // Sample positions for Simplen HR to confirm in Settings (flagged `sample` until saved there).
 // Missing titles are added; existing jobs are never changed or deleted.
@@ -37,10 +39,23 @@ async function main() {
   const tenant = await db.query.tenants.findFirst({ where: eq(tenants.slug, TENANT.slug) });
   if (!tenant) throw new Error("tenant upsert failed");
 
-  await db
-    .insert(stages)
-    .values(STAGES.map((name, i) => ({ tenantId: tenant.id, name, position: i + 1 })))
-    .onConflictDoNothing();
+  // Stages and reject reasons are editable in Settings, so they are seeded only into an empty tenant
+  // (a renamed sample must not come back on the next seed run).
+  if ((await db.$count(stages, eq(stages.tenantId, tenant.id))) === 0) {
+    await db.insert(stages).values(
+      STAGES.map((st, i) => ({
+        tenantId: tenant.id,
+        name: st.name,
+        position: i + 1,
+        isInterview: st.isInterview,
+        criteria: st.isInterview ? SAMPLE_CRITERIA.map((label) => ({ label, required: false })) : [],
+        sample: true,
+      })),
+    );
+  }
+  if ((await db.$count(rejectReasons, eq(rejectReasons.tenantId, tenant.id))) === 0) {
+    await db.insert(rejectReasons).values(REJECT_REASONS.map((label, i) => ({ tenantId: tenant.id, label, position: i + 1, sample: true })));
+  }
   await db
     .insert(jobs)
     .values(JOBS.map((title) => ({ tenantId: tenant.id, title, sample: true })))
@@ -86,8 +101,9 @@ async function main() {
     db.$count(jobs, eq(jobs.tenantId, tenant.id)),
     db.$count(locations, eq(locations.tenantId, tenant.id)),
     db.$count(users, eq(users.tenantId, tenant.id)),
+    db.$count(rejectReasons, eq(rejectReasons.tenantId, tenant.id)),
   ]);
-  console.log(`tenant "${tenant.slug}": stages=${counts[0]} jobs=${counts[1]} locations=${counts[2]} users=${counts[3]}`);
+  console.log(`tenant "${tenant.slug}": stages=${counts[0]} jobs=${counts[1]} locations=${counts[2]} users=${counts[3]} reject_reasons=${counts[4]}`);
 }
 
 main()

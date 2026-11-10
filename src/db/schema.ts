@@ -15,6 +15,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -31,7 +32,8 @@ const tenantId = () =>
     .notNull()
     .references(() => tenants.id);
 
-export const roleEnum = pgEnum("staff_role", ["admin", "hr", "interviewer", "manager"]);
+// display: read-only lobby TV login, can open /tv only.
+export const roleEnum = pgEnum("staff_role", ["admin", "hr", "interviewer", "manager", "display"]);
 export const outcomeEnum = pgEnum("application_outcome", [
   "in_progress",
   "selected",
@@ -49,7 +51,13 @@ export const queueEventEnum = pgEnum("queue_event_type", [
   "started",
   "completed",
   "skipped",
+  "returned", // left a panel without a decision (panel away / closed); keeps the queue position
 ]);
+export const panelStatusEnum = pgEnum("panel_status", ["available", "busy", "away", "closed"]);
+export const decisionEnum = pgEnum("interview_decision", ["pass", "hold", "reject"]);
+
+/** A scorecard criterion of a stage, rated 1–5. */
+export type Criterion = { label: string; required: boolean };
 export const recommendationEnum = pgEnum("scorecard_recommendation", [
   "strong_yes",
   "yes",
@@ -68,6 +76,8 @@ export const tenants = pgTable("tenants", {
   photoRetentionDays: integer("photo_retention_days").notNull().default(180),
   dataRetentionDays: integer("data_retention_days").notNull().default(365),
   cooldownDays: integer("cooldown_days").notNull().default(90),
+  // Set by HR in Settings; used for wait estimates only until today has real interview times.
+  avgInterviewMinutes: integer("avg_interview_minutes"),
   createdAt: createdAt(),
 });
 
@@ -183,6 +193,9 @@ export const stages = pgTable(
     name: text("name").notNull(),
     position: integer("position").notNull(),
     active: boolean("active").notNull().default(true),
+    isInterview: boolean("is_interview").notNull().default(false), // an interview round with a panel
+    criteria: jsonb("criteria").$type<Criterion[]>().notNull().default([]),
+    sample: boolean("sample").notNull().default(false), // from the seed, not yet confirmed by an admin
     createdAt: createdAt(),
   },
   (t) => [unique("stages_tenant_name_uq").on(t.tenantId, t.name)],
@@ -221,9 +234,14 @@ export const drives = pgTable(
     name: text("name").notNull(),
     driveDate: date("drive_date", { mode: "string" }).notNull(),
     active: boolean("active").notNull().default(true),
+    closedAt: ts("closed_at"), // "End of day"
+    closedBy: text("closed_by").references(() => users.id),
     createdAt: createdAt(),
   },
-  (t) => [index("drives_tenant_date_idx").on(t.tenantId, t.driveDate)],
+  (t) => [
+    index("drives_tenant_date_idx").on(t.tenantId, t.driveDate),
+    unique("drives_tenant_location_day_uq").on(t.tenantId, t.locationId, t.driveDate),
+  ],
 );
 
 export const panels = pgTable(
@@ -235,11 +253,29 @@ export const panels = pgTable(
       .notNull()
       .references(() => stages.id),
     locationId: uuid("location_id").references(() => locations.id),
-    name: text("name").notNull(),
+    name: text("name").notNull(), // the room; a room's row is reused on later drive days
     active: boolean("active").notNull().default(true),
+    driveId: uuid("drive_id").references(() => drives.id),
+    interviewerId: text("interviewer_id").references(() => users.id),
+    status: panelStatusEnum("status").notNull().default("available"),
     createdAt: createdAt(),
   },
   (t) => [unique("panels_tenant_name_uq").on(t.tenantId, t.name)],
+);
+
+// Editable list shown when a round rejects a candidate (seeded from REJECT_REASONS in options.ts).
+export const rejectReasons = pgTable(
+  "reject_reasons",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    label: text("label").notNull(),
+    position: integer("position").notNull(),
+    active: boolean("active").notNull().default(true),
+    sample: boolean("sample").notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [unique("reject_reasons_tenant_label_uq").on(t.tenantId, t.label)],
 );
 
 // ---- Candidates (no Aadhaar collected at intake) ----
@@ -309,6 +345,10 @@ export const applications = pgTable(
     outcome: outcomeEnum("outcome").notNull().default("in_progress"),
     rejectReason: text("reject_reason"),
     clientRequestId: uuid("client_request_id").notNull(), // idempotency key from the tablet
+    panelId: uuid("panel_id").references(() => panels.id), // set while in an interview
+    decidedAt: ts("decided_at"), // final outcome time (selected / rejected / no show / walked away)
+    purgeAfter: ts("purge_after"), // retention: delete data after this (null = talent pool / not decided)
+    photoPurgeAfter: ts("photo_purge_after"),
     source: text("source"), // how the candidate heard about the opening (src/lib/options.ts)
     hrNotes: text("hr_notes"),
     createdBy: text("created_by").references(() => users.id),
@@ -319,6 +359,9 @@ export const applications = pgTable(
     unique("applications_tenant_client_request_uq").on(t.tenantId, t.clientRequestId),
     unique("applications_tenant_day_token_uq").on(t.tenantId, t.tokenDate, t.token),
     index("applications_candidate_idx").on(t.candidateId),
+    index("applications_tenant_drive_idx").on(t.tenantId, t.driveId),
+    // One candidate per panel at a time, enforced by the database (two "Assign next" at once).
+    uniqueIndex("applications_panel_uq").on(t.panelId).where(sql`${t.panelId} is not null`),
     check(
       "applications_reject_reason_ck",
       sql`${t.outcome} <> 'rejected' or ${t.rejectReason} is not null`,
@@ -361,6 +404,8 @@ export const queueEvents = pgTable(
     panelId: uuid("panel_id").references(() => panels.id),
     event: queueEventEnum("event").notNull(),
     actorUserId: text("actor_user_id").references(() => users.id),
+    interviewerId: text("interviewer_id").references(() => users.id), // panel's interviewer when called
+    note: text("note"), // reason for overrides, no-shows etc. (kept out of audit_log)
     createdAt: createdAt(),
   },
   (t) => [
@@ -386,6 +431,9 @@ export const scorecards = pgTable(
     scores: jsonb("scores").$type<Record<string, number>>().notNull().default({}),
     overall: integer("overall"),
     recommendation: recommendationEnum("recommendation"),
+    decision: decisionEnum("decision"),
+    rejectReason: text("reject_reason"),
+    panelId: uuid("panel_id").references(() => panels.id),
     comments: text("comments"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
