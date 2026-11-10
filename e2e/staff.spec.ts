@@ -1,6 +1,6 @@
-import path from "node:path";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import postgres from "postgres";
+import { shoot, signIn } from "./helpers";
 
 // Test users use this domain and are deleted afterwards.
 const TEST_DOMAIN = "e2e.example.test";
@@ -10,14 +10,6 @@ const hr = {
   email: `hr-${Date.now()}@${TEST_DOMAIN}`,
   password: `E2e-${crypto.randomUUID().slice(0, 12)}`,
 };
-// Set SHOTS_DIR to save UI screenshots there (keep it outside the repo).
-const SHOTS = process.env.SHOTS_DIR;
-const VIEWPORTS = [
-  { name: "1440", width: 1440, height: 900 },
-  { name: "1024", width: 1024, height: 768 },
-  { name: "800x1280", width: 800, height: 1280 },
-];
-
 test.describe.configure({ mode: "serial" });
 
 test.afterAll(async () => {
@@ -26,24 +18,8 @@ test.afterAll(async () => {
   await sql.end();
 });
 
-async function signIn(page: Page, who: { email: string; password: string }) {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(who.email);
-  await page.getByLabel("Password").fill(who.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-}
-
-async function shoot(page: Page, name: string) {
-  if (!SHOTS) return;
-  for (const v of VIEWPORTS) {
-    await page.setViewportSize({ width: v.width, height: v.height });
-    await page.screenshot({ path: path.join(SHOTS, `${name}-${v.name}.png`), fullPage: true });
-  }
-  await page.setViewportSize({ width: 1280, height: 800 });
-}
-
 test("signed-out visitors are sent to /login", async ({ page }) => {
-  for (const url of ["/", "/dashboard", "/dashboard/users", "/intake", "/account/password"]) {
+  for (const url of ["/", "/dashboard", "/dashboard/users", "/dashboard/settings", "/intake", "/account/password", "/dashboard/candidates/7d1c0f5e-3a55-4a51-9a49-5b8a0d1e2f30"]) {
     await page.goto(url);
     await expect(page).toHaveURL(/\/login$/);
   }
@@ -73,6 +49,12 @@ test("admin adds an HR user", async ({ page }) => {
 
 test("HR is blocked from the users page", async ({ page }) => {
   await signIn(page, hr);
+  // Temporary password from the admin: change it first (see intake.spec.ts for the full rule).
+  await expect(page).toHaveURL(/\/account\/password$/);
+  await page.getByLabel("Temporary password").fill(hr.password);
+  await page.getByLabel("New password", { exact: true }).fill(`${hr.password}-new`);
+  await page.getByLabel("Repeat new password").fill(`${hr.password}-new`);
+  await page.getByRole("button", { name: "Change password" }).click();
   await expect(page).toHaveURL(/\/intake$/);
   await expect(page.getByRole("link", { name: "Staff", exact: true })).toHaveCount(0);
 

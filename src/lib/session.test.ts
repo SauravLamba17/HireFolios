@@ -2,8 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getSession = vi.fn();
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
+vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
+vi.mock("next/navigation", () => ({
+  redirect: (url: string) => {
+    throw new Error(`REDIRECT ${url}`);
+  },
+}));
 
-const { ROLES, can, homePath, requireStaffApi } = await import("./session");
+const { ROLES, can, homePath, requireStaff, requireStaffApi } = await import("./session");
 const { roleEnum } = await import("@/db/schema");
 const { requestOrigin } = await import("./origin");
 
@@ -27,6 +33,16 @@ describe("role rules", () => {
     expect(can("hr", "intake")).toBe(true);
     expect(can("interviewer", "intake")).toBe(false);
     expect(can("manager", "intake")).toBe(false);
+  });
+
+  it("candidate list for admin, HR and manager; not interviewers yet", () => {
+    expect(["admin", "hr", "manager"].every((r) => can(r as never, "candidates"))).toBe(true);
+    expect(can("interviewer", "candidates")).toBe(false);
+  });
+
+  it("only admins change settings", () => {
+    expect(can("admin", "settings")).toBe(true);
+    for (const r of ["hr", "interviewer", "manager"] as const) expect(can(r, "settings")).toBe(false);
   });
 
   it("HR lands on intake, everyone else on the dashboard", () => {
@@ -74,7 +90,7 @@ describe("requireStaffApi", () => {
     getSession.mockResolvedValue(user({ role: "admin" }));
     const { staff, error } = await requireStaffApi(req(), "users");
     expect(error).toBeUndefined();
-    expect(staff).toEqual({ id: "u1", name: "A", email: "a@example.test", role: "admin", tenantId: "t1" });
+    expect(staff).toEqual({ id: "u1", name: "A", email: "a@example.test", role: "admin", tenantId: "t1", mustChangePassword: false });
   });
 
   it("403 for a cross-site write, before looking at the session", async () => {
@@ -94,6 +110,35 @@ describe("requireStaffApi", () => {
     getSession.mockResolvedValue(user({ role: "admin" }));
     const lan = req({ headers: { host: "192.168.1.7:3000", origin: "http://192.168.1.7:3000" } });
     expect((await requireStaffApi(lan, "users")).staff).toBeDefined();
+  });
+});
+
+describe("forced password change (temporary password)", () => {
+  beforeEach(() => getSession.mockReset());
+
+  it("APIs answer 403 until the password is changed", async () => {
+    getSession.mockResolvedValue(user({ role: "admin", mustChangePassword: true }));
+    const { error } = await requireStaffApi(req(), "users");
+    expect(error?.status).toBe(403);
+    expect(await error?.json()).toEqual({ error: "Change your temporary password first." });
+  });
+
+  it("pages redirect to /account/password, even without a permission", async () => {
+    getSession.mockResolvedValue(user({ role: "hr", mustChangePassword: true }));
+    await expect(requireStaff("intake")).rejects.toThrow("REDIRECT /account/password");
+    await expect(requireStaff()).rejects.toThrow("REDIRECT /account/password");
+  });
+
+  it("the rule wins over the role check, and goes away once changed", async () => {
+    getSession.mockResolvedValue(user({ role: "interviewer", mustChangePassword: true }));
+    await expect(requireStaff("users")).rejects.toThrow("REDIRECT /account/password");
+    getSession.mockResolvedValue(user({ role: "hr", mustChangePassword: false }));
+    await expect(requireStaff("intake")).resolves.toMatchObject({ role: "hr" });
+  });
+
+  it("signed-out users still go to /login first", async () => {
+    getSession.mockResolvedValue(null);
+    await expect(requireStaff("intake")).rejects.toThrow("REDIRECT /login");
   });
 });
 

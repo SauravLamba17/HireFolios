@@ -15,7 +15,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx --env-file-if-exists=.env src/db/seed.ts",
-    "postbuild": "node -e \"const fs=require('fs');fs.cpSync('.next/static','.next/standalone/.next/static',{recursive:true});if(fs.existsSync('public'))fs.cpSync('public','.next/standalone/public',{recursive:true})\""
+    "postbuild": "node -e \"const fs=require('fs'),d=process.env.NEXT_DIST_DIR||'.next';fs.cpSync(d+'/static',d+'/standalone/'+d+'/static',{recursive:true});if(fs.existsSync('public'))fs.cpSync('public',d+'/standalone/public',{recursive:true})\"",
+    "smoke": "tsx --env-file-if-exists=.env scripts/smoke.ts"
   },
   "dependencies": {
     "better-auth": "^1.7.19",
