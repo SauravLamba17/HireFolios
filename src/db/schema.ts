@@ -41,8 +41,11 @@ export const outcomeEnum = pgEnum("application_outcome", [
   "on_hold",
   "withdrawn",
   "no_show",
+  "offer_declined", // selected, offered a job, said no
+  "joined", // selected and joined: never purged
 ]);
-// photo: live photo. cv_page: CV page photographed on the tablet. cv_upload: CV file (PDF/image) uploaded as is.
+export const offerStatusEnum = pgEnum("offer_status", ["offered", "accepted", "declined"]);
+// photo: live photo. cv_page: paper CV page photographed with the webcam. cv_upload: CV file (PDF/Word/image) uploaded as is.
 export const fileKindEnum = pgEnum("candidate_file_kind", ["photo", "cv_page", "cv_upload"]);
 export const jobStatusEnum = pgEnum("job_status", ["open", "paused", "closed"]);
 export const queueEventEnum = pgEnum("queue_event_type", [
@@ -64,7 +67,7 @@ export const recommendationEnum = pgEnum("scorecard_recommendation", [
   "no",
   "strong_no",
 ]);
-export const dsrKindEnum = pgEnum("dsr_kind", ["access", "correction", "erasure", "withdraw_consent"]);
+export const dsrKindEnum = pgEnum("dsr_kind", ["access", "correction", "erasure", "withdraw_consent", "grievance"]);
 export const dsrStatusEnum = pgEnum("dsr_status", ["open", "in_progress", "completed", "rejected"]);
 export const exportStatusEnum = pgEnum("export_status", ["queued", "running", "done", "failed"]);
 
@@ -344,11 +347,16 @@ export const applications = pgTable(
       .references(() => stages.id),
     outcome: outcomeEnum("outcome").notNull().default("in_progress"),
     rejectReason: text("reject_reason"),
-    clientRequestId: uuid("client_request_id").notNull(), // idempotency key from the tablet
+    clientRequestId: uuid("client_request_id").notNull(), // idempotency key from the browser
     panelId: uuid("panel_id").references(() => panels.id), // set while in an interview
     decidedAt: ts("decided_at"), // final outcome time (selected / rejected / no show / walked away)
     purgeAfter: ts("purge_after"), // retention: delete data after this (null = talent pool / not decided)
     photoPurgeAfter: ts("photo_purge_after"),
+    // Offer and joining (after Selected). CTC in whole rupees per year, dates are IST calendar days.
+    offerStatus: offerStatusEnum("offer_status"),
+    offeredCtc: integer("offered_ctc"),
+    joiningDate: date("joining_date", { mode: "string" }), // planned
+    joinedOn: date("joined_on", { mode: "string" }), // actual
     source: text("source"), // how the candidate heard about the opening (src/lib/options.ts)
     hrNotes: text("hr_notes"),
     createdBy: text("created_by").references(() => users.id),
@@ -490,9 +498,14 @@ export const dsrRequests = pgTable(
     candidateId: uuid("candidate_id").references(() => candidates.id, { onDelete: "set null" }),
     kind: dsrKindEnum("kind").notNull(),
     status: dsrStatusEnum("status").notNull().default("open"),
-    requestedAt: ts("requested_at").notNull().defaultNow(),
+    requestedAt: ts("requested_at").notNull().defaultNow(), // when it was received
+    dueAt: ts("due_at"), // received + 90 days
+    requesterName: text("requester_name"),
+    requesterContact: text("requester_contact"),
     resolvedAt: ts("resolved_at"),
+    resolution: text("resolution"),
     handledBy: text("handled_by").references(() => users.id),
+    createdBy: text("created_by").references(() => users.id),
     notes: text("notes"),
   },
   (t) => [index("dsr_requests_tenant_status_idx").on(t.tenantId, t.status)],

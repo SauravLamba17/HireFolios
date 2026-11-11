@@ -173,3 +173,23 @@ describe("requestOrigin", () => {
     expect(requestOrigin(new Request("http://x/"))).toBeNull();
   });
 });
+
+describe("Phase 3 permissions", () => {
+  it("exports and rights requests: admin and HR; reports also for managers; audit log admin only", () => {
+    expect(can("hr", "export") && can("admin", "export") && !can("manager", "export")).toBe(true);
+    expect(can("hr", "privacy") && can("admin", "privacy") && !can("manager", "privacy")).toBe(true);
+    expect(can("manager", "reports") && can("hr", "reports") && can("admin", "reports")).toBe(true);
+    expect(can("admin", "audit") && !can("hr", "audit") && !can("manager", "audit")).toBe(true);
+    expect(ROLES.interviewer).toEqual(["interview"]);
+    expect(ROLES.display).toEqual(["tv"]);
+  });
+});
+
+describe("TV session length", () => {
+  it("lobby TV 30 days, everyone else one 12-hour shift", async () => {
+    const { sessionSeconds, SESSION_SECONDS } = await import("./session-length");
+    expect(sessionSeconds("display")).toBe(30 * 24 * 3600);
+    for (const r of ["admin", "hr", "interviewer", "manager"]) expect(sessionSeconds(r)).toBe(12 * 3600);
+    expect(SESSION_SECONDS.display).toBeGreaterThan(SESSION_SECONDS.staff);
+  });
+});

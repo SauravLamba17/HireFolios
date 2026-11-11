@@ -127,7 +127,11 @@ export const OUTCOME_LABELS: Record<string, string> = {
   on_hold: "On hold",
   withdrawn: "Walked away",
   no_show: "No show",
+  offer_declined: "Offer declined",
+  joined: "Joined",
 };
+
+export const OFFER_STATUS_LABELS: Record<string, string> = { offered: "Offered", accepted: "Accepted", declined: "Declined" };
 
 export const DECISION_LABELS: Record<string, string> = { pass: "Pass", hold: "Hold", reject: "Reject" };
 

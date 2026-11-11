@@ -3,7 +3,7 @@
 
 export type StageInfo = { id: string; position: number; active: boolean; isInterview: boolean };
 export type Decision = "pass" | "hold" | "reject";
-export type Outcome = "in_progress" | "selected" | "rejected" | "on_hold" | "withdrawn" | "no_show";
+export type Outcome = "in_progress" | "selected" | "rejected" | "on_hold" | "withdrawn" | "no_show" | "offer_declined" | "joined";
 
 export class FlowError extends Error {}
 /** A row that does not exist for this tenant (another tenant's id looks the same): answered with 404. */
@@ -57,8 +57,9 @@ export function applyDecision(stages: StageInfo[], currentStageId: string, decis
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const NOT_HIRED: Outcome[] = ["rejected", "no_show", "withdrawn"];
-const FINAL: Outcome[] = ["selected", ...NOT_HIRED];
+// Not hired → purge dates (unless talent pool). Joined → never purged.
+const NOT_HIRED: Outcome[] = ["rejected", "no_show", "withdrawn", "offer_declined"];
+const FINAL: Outcome[] = ["selected", "joined", ...NOT_HIRED];
 
 /**
  * Columns to write whenever an outcome is set. Final outcomes get decided_at; candidates who were not hired
@@ -116,3 +117,19 @@ export function waitEstimate(input: {
 
 /** Interviewers only see candidates they interview(ed); roles with the candidates permission see all. */
 export const mayViewCandidate = (canSeeAll: boolean, everAssignedToMe: boolean) => canSeeAll || everAssignedToMe;
+
+export type OfferStatus = "offered" | "accepted" | "declined";
+
+/**
+ * Recording an offer is allowed after Selected (and again after a decline, if the candidate changes their mind).
+ * Declined → outcome "offer_declined" (gets purge dates like any not-hired candidate); offered / accepted → "selected".
+ */
+export function offerOutcome(current: Outcome, status: OfferStatus): Outcome {
+  if (current !== "selected" && current !== "offer_declined") throw new FlowError("Offers can be recorded only for selected candidates.");
+  return status === "declined" ? "offer_declined" : "selected";
+}
+
+/** "Mark joined": only a selected candidate whose offer was not declined. Joined candidates are never purged. */
+export function canMarkJoined(current: Outcome, offerStatus: OfferStatus | null): boolean {
+  return current === "selected" && offerStatus !== "declined";
+}

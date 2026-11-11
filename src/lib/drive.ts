@@ -4,7 +4,7 @@
 import { and, asc, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
 import { applications, consents, drives, locations, panels, queueEvents, rejectReasons, scorecards, stages, tenants, users } from "@/db/schema";
-import { applyDecision, FlowError, NotFoundError, outcomeDates, pickNext, queueOrder, queueStage, waitEstimate, type Decision, type Outcome, type StageInfo } from "@/lib/flow";
+import { applyDecision, canMarkJoined, FlowError, NotFoundError, offerOutcome, outcomeDates, pickNext, queueOrder, queueStage, waitEstimate, type Decision, type OfferStatus, type Outcome, type StageInfo } from "@/lib/flow";
 import { todayIST } from "@/lib/ist";
 import { audit } from "@/lib/staff";
 import type { Staff } from "@/lib/session";
@@ -517,4 +517,32 @@ export async function resume(tx: Tx, staff: Staff, applicationId: string) {
   await tx.update(applications).set({ driveId: drive.id }).where(eq(applications.id, a.id));
   await tx.insert(queueEvents).values({ tenantId: staff.tenantId, applicationId: a.id, stageId: a.currentStageId, event: "queued", actorUserId: staff.id, note: "resumed from hold" });
   await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "application.resume", entityType: "application", entityId: a.id });
+}
+
+// ---------- offer and joining (profile) ----------
+
+export async function recordOffer(
+  tx: Tx,
+  staff: Staff,
+  applicationId: string,
+  input: { status: OfferStatus; offeredCtc: number | null; joiningDate: string | null },
+) {
+  const a = await lockApplication(tx, staff, applicationId);
+  const next = offerOutcome(a.outcome as Outcome, input.status);
+  if (next !== a.outcome) await setOutcome(tx, staff, a, next, a.currentStageId, null);
+  await tx
+    .update(applications)
+    .set({ offerStatus: input.status, offeredCtc: input.offeredCtc, joiningDate: input.joiningDate })
+    .where(eq(applications.id, a.id));
+  await tx.insert(queueEvents).values({ tenantId: staff.tenantId, applicationId: a.id, stageId: a.currentStageId, event: "completed", actorUserId: staff.id, note: `Offer ${input.status}` });
+  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "application.offer", entityType: "application", entityId: a.id, meta: { status: input.status, outcome: next } });
+}
+
+export async function markJoined(tx: Tx, staff: Staff, applicationId: string, joinedOn: string) {
+  const a = await lockApplication(tx, staff, applicationId);
+  if (!canMarkJoined(a.outcome as Outcome, a.offerStatus)) throw new FlowError("Only a selected candidate whose offer was not declined can be marked joined.");
+  await setOutcome(tx, staff, a, "joined", a.currentStageId, null); // decided now; joined is never purged
+  await tx.update(applications).set({ joinedOn, offerStatus: a.offerStatus ?? "accepted" }).where(eq(applications.id, a.id));
+  await tx.insert(queueEvents).values({ tenantId: staff.tenantId, applicationId: a.id, stageId: a.currentStageId, event: "completed", actorUserId: staff.id, note: "Joined" });
+  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "application.joined", entityType: "application", entityId: a.id });
 }

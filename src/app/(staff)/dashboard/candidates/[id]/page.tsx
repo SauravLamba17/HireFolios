@@ -6,13 +6,13 @@ import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { db, isUuid } from "@/db";
 import { applications, candidateFiles, candidates, consents, jobs, rejectReasons, stages, users } from "@/db/schema";
 import { StatusBadge, Tag } from "@/components/status-badge";
-import { formatDateIST, formatDateTimeIST, formatDayIST } from "@/lib/ist";
-import { formatLpa } from "@/lib/money";
+import { formatDateIST, formatDateTimeIST, formatDayIST, todayIST } from "@/lib/ist";
+import { formatLpa, rupeesToLpa } from "@/lib/money";
 import { NOTICE_LANGUAGES } from "@/lib/notice";
 import { canViewCandidate } from "@/lib/access";
-import { DECISION_LABELS, experienceLabel, noticeLabel } from "@/lib/options";
+import { DECISION_LABELS, experienceLabel, noticeLabel, OFFER_STATUS_LABELS } from "@/lib/options";
 import { can, requireStaff } from "@/lib/session";
-import { OverrideForm, ResumeButton } from "./profile-actions";
+import { CorrectDetails, OfferForm, OverrideForm, ResumeButton } from "./profile-actions";
 import { audit } from "@/lib/staff";
 
 export const metadata: Metadata = { title: "Candidate" };
@@ -73,6 +73,10 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
         decidedAt: applications.decidedAt,
         purgeAfter: applications.purgeAfter,
         photoPurgeAfter: applications.photoPurgeAfter,
+        offerStatus: applications.offerStatus,
+        offeredCtc: applications.offeredCtc,
+        joiningDate: applications.joiningDate,
+        joinedOn: applications.joinedOn,
         source: applications.source,
         hrNotes: applications.hrNotes,
         by: users.name,
@@ -120,6 +124,7 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
   ]);
   const canOverride = can(staff.role, "override");
   const canResume = can(staff.role, "resume");
+  const canOffer = can(staff.role, "offer");
 
   await audit(db, { tenantId, actorUserId: staff.id, action: "candidate.view", entityType: "candidate", entityId: id });
 
@@ -177,6 +182,10 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
         />
       </section>
 
+      {can(staff.role, "privacy") && (
+        <CorrectDetails candidateId={c.id} value={{ fullName: c.fullName, mobile: c.mobile, email: c.email, city: c.city, dateOfBirth: c.dateOfBirth }} />
+      )}
+
       <section className="card space-y-4" aria-labelledby="rcm-h">
         <h2 id="rcm-h" className="text-lg font-semibold">Medical billing / RCM</h2>
         <Facts
@@ -211,9 +220,12 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
               <p className="text-sm text-slate-600">
                 {[
                   v.decidedAt && `Decided ${formatDateTimeIST(v.decidedAt)}`,
+                  v.offerStatus && `Offer ${OFFER_STATUS_LABELS[v.offerStatus].toLowerCase()}${v.offeredCtc !== null ? ` at ${formatLpa(v.offeredCtc)}` : ""}`,
+                  v.joiningDate && !v.joinedOn && `joining ${formatDayIST(v.joiningDate)}`,
+                  v.joinedOn && `Joined ${formatDayIST(v.joinedOn)}`,
                   v.purgeAfter && `data kept until ${formatDateIST(v.purgeAfter)}`,
                   v.photoPurgeAfter && `photo until ${formatDateIST(v.photoPurgeAfter)}`,
-                  v.decidedAt && !v.purgeAfter && v.outcome !== "selected" && "talent pool: no purge date",
+                  v.decidedAt && !v.purgeAfter && v.outcome !== "selected" && v.outcome !== "joined" && "talent pool: no purge date",
                   v.source && `Source: ${v.source}`,
                   v.by && `Registered by ${v.by}`,
                 ]
@@ -259,6 +271,14 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
               )}
 
               {vi === 0 && canResume && v.outcome === "on_hold" && <ResumeButton applicationId={v.id} />}
+              {vi === 0 && canOffer && (v.outcome === "selected" || v.outcome === "offer_declined") && (
+                <OfferForm
+                  applicationId={v.id}
+                  offer={{ status: v.offerStatus, offeredCtcLpa: v.offeredCtc === null ? null : rupeesToLpa(v.offeredCtc), joiningDate: v.joiningDate }}
+                  canJoin={v.outcome === "selected" && v.offerStatus !== "declined"}
+                  today={todayIST()}
+                />
+              )}
               {vi === 0 && canOverride && <OverrideForm applicationId={v.id} stages={stageRows} reasons={reasonRows.map((r) => r.label)} />}
             </article>
           );
@@ -296,7 +316,7 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
         {uploads.map((u) => (
           <p key={u.id}>
             <a href={`/api/files/${u.id}`} target="_blank" rel="noreferrer" className="btn btn-secondary">
-              Open uploaded CV ({u.mimeType === "application/pdf" ? "PDF" : "image"})
+              Open uploaded CV ({u.mimeType === "application/pdf" ? "PDF" : u.mimeType.includes("wordprocessingml") ? "Word, downloads" : "image"})
             </a>
             <span className="ml-3 text-sm text-slate-600">{u.applicationId && `visit ${tokenOf.get(u.applicationId)}`}</span>
           </p>

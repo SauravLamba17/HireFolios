@@ -99,3 +99,28 @@ describe("interviewer access", () => {
     expect(mayViewCandidate(true, false)).toBe(true);
   });
 });
+
+describe("offer and joining", () => {
+  it("offers only after Selected; declined → offer_declined, offered/accepted → selected", async () => {
+    const { offerOutcome } = await import("./flow");
+    expect(offerOutcome("selected", "offered")).toBe("selected");
+    expect(offerOutcome("selected", "accepted")).toBe("selected");
+    expect(offerOutcome("selected", "declined")).toBe("offer_declined");
+    expect(offerOutcome("offer_declined", "accepted")).toBe("selected"); // changed their mind
+    for (const o of ["in_progress", "rejected", "on_hold", "joined", "no_show"] as const) expect(() => offerOutcome(o, "offered")).toThrow(FlowError);
+  });
+  it("mark joined: selected with an offer that was not declined", async () => {
+    const { canMarkJoined } = await import("./flow");
+    expect(canMarkJoined("selected", "accepted")).toBe(true);
+    expect(canMarkJoined("selected", null)).toBe(true);
+    expect(canMarkJoined("selected", "declined")).toBe(false);
+    expect(canMarkJoined("offer_declined", "declined")).toBe(false);
+    expect(canMarkJoined("joined", "accepted")).toBe(false);
+  });
+  it("joined and offer_declined get the right dates", () => {
+    const now = new Date("2026-11-11T10:00:00Z");
+    const tenant = { dataRetentionDays: 365, photoRetentionDays: 180 };
+    expect(outcomeDates("joined", now, tenant, false)).toEqual({ decidedAt: now, purgeAfter: null, photoPurgeAfter: null });
+    expect(outcomeDates("offer_declined", now, tenant, false).purgeAfter?.toISOString()).toBe("2027-11-11T10:00:00.000Z");
+  });
+});

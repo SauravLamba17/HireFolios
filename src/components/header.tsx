@@ -10,8 +10,11 @@ const LINKS: { href: string; label: string; permission: Permission; also?: strin
   { href: "/intake", label: "+ New candidate", permission: "intake" },
   { href: "/dashboard/drive", label: "Drive", permission: "drive" },
   { href: "/interview", label: "Interview", permission: "interview" },
+  { href: "/dashboard/reports", label: "Reports", permission: "reports" },
+  { href: "/dashboard/privacy", label: "Privacy", permission: "privacy" },
   { href: "/dashboard/settings", label: "Settings", permission: "settings" },
   { href: "/dashboard/users", label: "Staff", permission: "users" },
+  { href: "/dashboard/audit", label: "Audit", permission: "audit" },
 ];
 
 export function Header({ staff }: { staff: Staff }) {

@@ -17,14 +17,19 @@ export type Permission =
   | "interview" // /interview workspace (needs a panel on today's drive)
   | "override" // move any stage / change outcome, with a reason
   | "resume" // put an on-hold candidate back in the queue
-  | "tv"; // lobby screen
+  | "tv" // lobby screen
+  | "offer" // record offers, mark joined
+  | "export" // Excel / CSV downloads
+  | "reports"
+  | "privacy" // rights requests (access, correction, erasure, grievance)
+  | "audit"; // audit log viewer
 
 // The one permission map. Every role must be listed (TypeScript enforces it).
 export const ROLES = {
-  admin: ["dashboard", "candidates", "intake", "settings", "users", "drive", "driveManage", "interview", "override", "resume", "tv"],
-  hr: ["dashboard", "candidates", "intake", "drive", "driveManage", "resume", "tv"],
+  admin: ["dashboard", "candidates", "intake", "settings", "users", "drive", "driveManage", "interview", "override", "resume", "tv", "offer", "export", "reports", "privacy", "audit"],
+  hr: ["dashboard", "candidates", "intake", "drive", "driveManage", "resume", "tv", "offer", "export", "reports", "privacy"],
   interviewer: ["interview"],
-  manager: ["dashboard", "candidates", "drive", "interview", "override", "resume", "tv"],
+  manager: ["dashboard", "candidates", "drive", "interview", "override", "resume", "tv", "offer", "reports"],
   display: ["tv"],
 } as const satisfies Record<Role, readonly Permission[]>;
 

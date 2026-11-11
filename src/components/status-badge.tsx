@@ -7,6 +7,8 @@ const COLORS: Record<string, string> = {
   on_hold: "bg-amber-50 text-amber-900",
   withdrawn: "bg-slate-200 text-slate-700",
   no_show: "bg-slate-200 text-slate-700",
+  offer_declined: "bg-slate-200 text-slate-700",
+  joined: "bg-emerald-600 text-white",
 };
 
 /** Latest visit's status: the stage while in progress, else the outcome. */
