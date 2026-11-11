@@ -1,6 +1,6 @@
 # Progress
 
-Phase 3 is done except the Docker tests (Docker is not installed on the dev PC yet). Phase 4 is listed at the end.
+Phase 3 is complete (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is listed at the end.
 
 ## Phase 0 — Setup + login ✅ (2026-11-10)
 
@@ -99,7 +99,7 @@ Phase 3 is done except the Docker tests (Docker is not installed on the dev PC y
 - Wait estimates and the "minutes waiting" timer are approximate by design (position × average ÷ panels).
 - "End of day" sends anyone still in a room back to waiting; they stay in progress until HR marks them.
 
-## Phase 3 — PC intake, offers, exports, reports, privacy, production files (in progress: Docker tests pending)
+## Phase 3 — PC intake, offers, exports, reports, privacy, Windows install ✅ (2026-11-11)
 
 - [x] **PC-based intake** (no tablets): keyboard-first wizard (Enter = Next, Esc = back with confirm, focus moves to the
       next field), wider desk layout (1366x768 and up), "turn the screen to the candidate" consent wording (English/Hindi)
@@ -126,19 +126,41 @@ Phase 3 is done except the Docker tests (Docker is not installed on the dev PC y
 - [x] `/dashboard/audit` (admin): filters by action, staff, date; CSV export
 - [x] Lobby TV (`display`) sessions last 30 days, staff 12 hours; admin "Sign out everywhere" per user
 - [x] `/api/health` (no auth, no personal data: DB, free disk, last backup, version) and the admin "Server status" card
-- [x] Start-up (`src/instrumentation.ts`): migrations and seed when `RUN_MIGRATIONS=1` / `SEED_ON_START=1` (set in the image)
-- [x] Written, **not yet run**: `Dockerfile` (multi-stage, standalone, non-root, migrates on start, healthcheck),
-      `docker-compose.yml` (db + app + Caddy, `restart: unless-stopped`, uploads bind-mounted), `.env.production.example`,
-      `deploy/Caddyfile.cloudflare` (option A, Let's Encrypt via Cloudflare DNS) and `deploy/Caddyfile.internal` (option B,
-      `tls internal` + certutil steps), `deploy/backup.ps1|sh` (pg_dump + uploads archive, keep N days, offsite copy,
-      writes the last-backup time), `deploy/restore.ps1|sh` (typed RESTORE, safety backup first, one transaction),
-      Task Scheduler line (6:15 pm Mon–Sat), `docs/INSTALL.md`, `docs/FIRST-DRIVE-CHECKLIST.md`
-- [x] Verified (without Docker): see "Verification" below
-- [ ] **Docker tests (after Docker Desktop is installed):** image build, `up -d` on a fresh volume (migrate + seed on
-      start, health "ok"), HTTPS with option B (and option A if the Cloudflare token is available), webcam over HTTPS
-      from another PC, backup → restore round trip, fresh install from `docs/INSTALL.md`, then the Phase 3 final report
+- [x] Start-up (`src/instrumentation.ts`): migrations and seed when `RUN_MIGRATIONS=1` / `SEED_ON_START=1` (set by install.ps1)
+- [x] Docker files (written in Phase 3, never run) moved to `deploy/docker/`, marked optional for a future cloud / SaaS
+      setup, not used for Simplen and not maintained
+- [x] **PERMANENT rule (CLAUDE.md hard rule 13): manual entry by HR always works.** New `e2e/manual-intake.spec.ts`
+      types every field by hand, no CV, no webcam (photo through "Upload a photo file instead"), checks every saved
+      value and that no request left the server
+- [x] `npm run package [-- --version X]` (`scripts/package.mjs`): `release/hirefolios-<version>/` + `.zip` with the
+      standalone server, static files, migrations (the seed runs inside the server), the Node.js it was built with
+      (`node.exe`, OpenJS-signed), `VERSION.txt` / `release.env`, the Windows scripts, WinSW + Caddy (pinned versions,
+      SHA-256 checked) and the docs; no source, no tests, no `.env` (fails if one is there or if a secret from this
+      PC's `.env` appears in any file)
+- [x] `deploy/windows/install.ps1` (Administrator, safe to re-run): checks Windows / admin / disk / ports 80, 443 and the
+      app port; PostgreSQL 16 via winget (or `-PostgresInstaller` offline, EnterpriseDB signature checked) or an existing
+      16+ (asks its `postgres` password); own database + login with generated passwords (saved the moment they are
+      made); asks the address, HTTPS option and admin email / password; writes `C:\hirefolios\.env` (ACL: SYSTEM,
+      Administrators, the service only); uploads in `C:\hirefolios-data\uploads`; services `hirefolios` (WinSW) and
+      `hirefolios-caddy`, each as its own virtual account, automatic start, restart on failure; PostgreSQL limited to
+      localhost; firewall 80/443 for caddy.exe on private networks only; backup task 6:15 pm Mon-Sat (runs late if the
+      PC was off); checks HTTPS and the admin sign-in, then removes the admin password from `.env`
+- [x] HTTPS: option B (default) Caddy `tls internal` + `trust-certificate.ps1` per PC (compare the fingerprint, type its
+      last 4 characters; `-Remove`); option A Let's Encrypt via Cloudflare DNS (Caddy's official build with the
+      Cloudflare module; no published checksum, its SHA-256 is logged); `set-hosts.ps1` per PC + router DNS instructions
+- [x] `update.ps1`: checks the release (folder or zip) -> stops -> backs up -> swaps -> starts (migrations) -> health
+      check on the new version -> on failure rolls back the app and, if the migrations changed, the database
+- [x] `backup.ps1` / `restore.ps1`: pg_dump + uploads archive into a `.partial` folder, checked (`pg_restore --list`,
+      `tar -t`, manifest with SHA-256), then renamed; keeps N days (always the newest 3); optional second copy
+      (`BACKUP_COPY_DIR`); restore checks checksums, typed RESTORE, stops the app, safety backup (typed CONTINUE if the
+      current data cannot be backed up), replaces the database in one transaction, swaps the uploads folder
+- [x] `uninstall.ps1`: removes services, task, firewall rule, hosts line, certificate trust and `C:\hirefolios`; keeps
+      data, database and backups unless `-RemoveData` / `-RemoveBackups` (typed DELETE); `-RemovePostgreSQL` only if
+      install.ps1 installed it; kept settings move to `C:\hirefolios-data\config` for a later reinstall
+- [x] `docs/INSTALL.md` rewritten for a non-developer (shopping list, install, each PC, webcam, TV, daily use, backups,
+      restore, update, uninstall, troubleshooting); `docs/FIRST-DRIVE-CHECKLIST.md` and CLAUDE.md updated
 
-### Verification (Phase 3, without Docker)
+### Verification (Phase 3 features, before the Windows install work)
 
 - `tsc`, `eslint` clean; `vitest` 127 tests (8 files: flow, retention, reports, exports, files, intake, session, …); production build OK
 - Playwright 21/21 with two fake webcams: drive day (4), PC intake (7, incl. keyboard-only registration, webcam
@@ -156,10 +178,69 @@ Phase 3 is done except the Docker tests (Docker is not installed on the dev PC y
   500s; privacy status select not following "Erase now"; "talent pool" label on joined employees; "1 entries";
   install guide wording; smoke test now waits out the sign-in limit when another test run used it
 
+### Verification (Windows install, 2026-11-11, on the dev PC)
+
+- `tsc`, `eslint` clean; vitest 127/127; production build via `npm run package`; `npm run dev:check` 13 pages
+- Packaged server (release folder) on a scratch PostgreSQL 16.15: smoke 85/85; Playwright 21 passed, 1 skipped (the
+  plain-http LAN test needs the LAN address), including the new manual-only test
+- PSScriptAnalyzer 1.24: 0 findings with `deploy/windows/PSScriptAnalyzerSettings.psd1`, which excludes, with reasons,
+  Write-Host (interactive console scripts), ShouldProcess on internal helpers, and the plain-text password parameter
+  warnings (the value comes from the ACL-protected `.env`)
+- Without admin (scratch install folder): backup 15/15 (incl. 5 backups killed mid-run: never a complete-looking broken
+  backup, `.partial` refused by restore and cleaned after a day, pruning keeps the newest 3); restore 16/16 (wrong word
+  cancels, damaged archive refused, unreadable current data needs CONTINUE, tables of a newer version removed);
+  smoke 85/85 after the restore
+- **Full install on this PC** (test locations `C:\hirefolios-test*`, address `hf-test.hirefolios.in`, option B), with
+  the owner's OK: install (PostgreSQL via winget), re-run after an interrupted install, re-run with nothing asked;
+  smoke 85/85 over HTTPS 6 times; Playwright 21 passed over HTTPS with the live (fake) webcam; app / service wrapper /
+  Caddy killed -> back by themselves; all services stopped and started in boot order; update to a dummy 0.1.1;
+  crashing release -> rolled back (database untouched); release whose migration applies and then fails the health
+  check -> rolled back including the database; update from the zip; backup -> all tables dropped and uploads emptied
+  -> restore -> counts back, smoke 85/85; scheduled task run as SYSTEM; port 443 taken -> clear message, nothing
+  changed; wrong / right `postgres` password; admin password too short / bad email / nothing typed -> clear errors,
+  settings unchanged. Final test run: 54 checks passed, 2 failed (issues 19 and 20 below)
+- Uninstall + before/after comparison: services, PostgreSQL (program, port 5432), firewall rule, hosts file
+  (same SHA-256), Trusted Root (same list), task, test folders, ports 80/443: all back as before; `C:\hirefolios-data`
+  untouched. Left until the next restart: the two service accounts' empty profiles, PostgreSQL's empty registry keys,
+  and two "Windows PowerShell" firewall rules Windows made for the port-443 test listener (cleanup script for after
+  the restart)
+
+### Issues found while testing (logged before fixing; re-tested)
+
+| # | Issue | Severity | Fix |
+|---|---|---|---|
+| 1 | `next build` copies this PC's `.env` into the standalone output: a release would have carried dev secrets | major | package deletes `app/.env*`; a secret scan fails the package otherwise |
+| 2 | Git's GNU `tar` in PATH reads `C:\...` as a remote host: zip and backups failed | blocker | always `%SystemRoot%\System32\tar.exe` |
+| 3 | ESLint / tsc scanned `release/` (1,136 errors) | minor | ignored / excluded |
+| 4 | Restore stopped when the current data could not be backed up (the usual reason to restore) | blocker | warn, typed CONTINUE |
+| 5 | Restore took its safety backup before stopping the app | minor | stop first |
+| 6 | After a restore the status card lost the last-backup time | minor | `.last-backup` carried over |
+| 7 | A backup killed while another waited: `AbandonedMutexException` | minor | treated as acquired |
+| 8 | `-ServiceName ""` impossible from a command line (PowerShell 5.1 drops empty arguments) | major | `-NoService` switch |
+| 9 | A wrong `-PostgresSuperuserPassword` fell through to a prompt (an unattended install would hang) | minor | clear error |
+| 10 | `Read-Host` returns null without console input: install crashed at the "network is Public" question | major | null-safe `Read-Answer` everywhere |
+| 11 | `$PSScriptRoot` is empty in `param()` defaults under `-File`: update / backup / restore and the scheduled backup failed without `-InstallDir` | blocker | default set in the script body |
+| 12 | Generated secrets (PostgreSQL superuser, DB login) were saved only at the end: an install that stopped half way lost them | blocker | saved to `.env` before they are used |
+| 13 | The zip had a top folder: "Extract All" made `hirefolios-0.1.0\hirefolios-0.1.0` and the guide's first command failed | major | zip contents at its root |
+| 14 | Uninstall stopped half way: a service profile is "in use" right after the service stops | major | at the end, retried, never fatal |
+| 15 | `-ConfirmWords A,B` arrives as one string under `-File` | minor | split on commas |
+| 16 | PostgreSQL's uninstaller leaves its folder and empty registry keys | minor | removed when install.ps1 installed it (folder: re-tested; registry part written after the last run) |
+| 17 | Windows PowerShell 5.1 on older Windows 10 may offer only TLS 1.0 | minor (preventive) | TLS 1.2 enabled in common.ps1 |
+| 18 | PSScriptAnalyzer: unused variable, plural nouns; CLAUDE.md command block had broken characters | minor | fixed |
+| 19 | A password passed as `-AdminPassword` on a command line ends up in the install log header (Administrators-only folder) | minor | documented on the parameter; the guide never uses it (typed at the prompt) |
+| 20 | (test check) "data kept" compared audit row counts; the deletion job adds an audit row at every start | none | not a product issue |
+
 ### Known issues / left open after Phase 3
 
-- **Docker parts are untested** until Docker is installed (see the open item above). The PowerShell / shell scripts
-  were only syntax-checked.
+- **Left for the office PC** (could not be tested on the dev PC): a real restart / power cut (services were killed,
+  stopped and started, not rebooted); other PCs on the LAN (`set-hosts.ps1`, `trust-certificate.ps1 -Server`, the
+  webcam from the HR desk PC over HTTPS; the dev PC's Wi-Fi is a Public network, so the Private-only firewall rule was
+  not exercised); a person typing at the prompts (masked password, mismatch retry; tested with parameters and empty
+  input); `-PostgresInstaller` without internet; option A (no Cloudflare token); a real USB drive as `BACKUP_COPY_DIR`.
+- Uninstall leaves the two service accounts' empty Windows profiles (`C:\Windows\ServiceProfiles\hirefolios*`) until
+  the next restart (Windows holds them); its warning prints the one-line command to remove them afterwards.
+- A rollback restores the database from the pre-update backup only when the migrations changed; files the failed
+  version's deletion job removed in that minute are not put back (their rows are purged again anyway).
 - **To confirm with Simplen:** retention periods (defaults: 90-day cooling-off, photos 180 days, data 365 days), who
   answers rights requests. The privacy notice does not yet name a contact for requests and complaints; add one
   (and bump `NOTICE_VERSION`) once Simplen decides.
@@ -187,8 +268,15 @@ Phase 3 is done except the Docker tests (Docker is not installed on the dev PC y
 
 ## Phase 4 — next
 
-- [ ] One-time QR link so a candidate can upload their CV from their own phone (through a Cloudflare Tunnel)
-- [ ] CV auto-fill (read details from the uploaded CV, offline, no paid APIs)
-- [ ] Intake order Mobile → CV → Details (so auto-fill can prefill the details)
-- [ ] Flag photos that were uploaded rather than taken live ("uploaded, not live")
+Manual entry by HR stays available at every step (CLAUDE.md hard rule 13; `e2e/manual-intake.spec.ts` must keep passing).
+Everything below is an optional helper on top of it.
+
+- [ ] QR one-time candidate self-fill + CV upload: HR shows a one-time QR code; the candidate fills their details and
+      uploads their CV from their own phone, through a Cloudflare Tunnel (free) to the office server; link expires
+      after use / a short time; HR reviews everything before saving
+- [ ] Rule-based CV auto-fill as the backup when the candidate does not self-fill (offline, no paid APIs, no AI/OCR
+      services: text from PDF / .docx only, patterns for name, email, mobile, experience, certifications)
+- [ ] Intake reorder: Mobile → CV → Details (so self-fill / auto-fill can prefill the details)
+- [ ] Field markers "from CV" / "from candidate" next to pre-filled values; every pre-filled field stays editable
+- [ ] Photo flag "uploaded, not live" when the photo came from a file instead of the webcam
 - Later: tenant onboarding and settings for other companies (SaaS), merge possible duplicates

@@ -1,231 +1,270 @@
-# Installing Hirefolios on the office PC
+# Installing Hirefolios on the office PC (Windows)
 
 This guide is for the person who looks after the office computers. You do not need to be a
-developer. Follow the steps in order; each one says how to check it worked.
+developer. Follow the steps in order; each step says how to check it worked.
 
-Hirefolios runs on **one office PC** (the "server PC"). Everyone else (HR, interviewers,
-managers, the lobby TV) opens it in a browser at **https://simplen.hirefolios.in** on the
-office network. Nothing is sent to the internet.
+Hirefolios runs on **one Windows PC** in the office (the **server PC**). Everyone else (HR,
+interviewers, managers, the lobby TV) opens it in Chrome or Edge at
+**https://simplen.hirefolios.in** on the office network. Nothing is sent to the internet.
+
+On the server PC, three Windows services start by themselves whenever Windows starts:
+
+| Service (in `services.msc`) | What it is |
+|---|---|
+| `postgresql-x64-16` | The database (all candidate records) |
+| `Hirefolios` | The Hirefolios program |
+| `Hirefolios HTTPS (Caddy)` | The secure `https://` address (the webcam needs it) |
+
+Nobody needs to start anything by hand.
 
 ---
 
-## 1. What you need
+## 1. What to buy
 
-- A Windows 10 or 11 PC that stays on during office hours: 8 GB memory or more, 50 GB free disk.
-  Set **Settings → System → Power → Sleep: Never** (the screen may turn off).
-- The Hirefolios folder (from your developer), copied to `C:\hirefolios`.
-- Admin rights on that PC.
-- For HTTPS option A only: access to the Cloudflare account that holds `hirefolios.in`.
+| Item | Notes |
+|---|---|
+| **Server PC** (or a mini PC) | Windows 10 or 11, 64-bit. 8 GB memory (16 GB better), **SSD** with 256 GB or more, wired network port. A business mini PC is fine; it only needs to stay on. |
+| **UPS** (battery backup), 600-1000 VA | For the server PC **and** the router, so a short power cut does not stop drive day or damage the database. |
+| **USB webcam** for the HR desk PC | Any 1080p USB webcam that works in Windows' Camera app. Two webcams on one PC are fine (you pick one in Hirefolios). |
+| **USB drive or second disk**, 64 GB or more | A second copy of the nightly backup. Keep it plugged into the server PC, or swap two drives weekly and take one home. |
+| Scanner (optional) | Only if you prefer scanning paper CVs to PDF; the webcam can photograph paper CVs too. |
+| **TV** for the lobby + a small PC / stick PC / old laptop with Chrome, HDMI cable | Shows token numbers being called. |
+| Router | Must let you **reserve an address** for the server PC (almost all can). "Local DNS" is a bonus (step 5). |
 
-## 2. Give the server PC a fixed address
+## 2. Prepare the server PC
 
-In your router's admin page, find **DHCP reservation** (sometimes "Static lease" or "Address
-reservation") and reserve an address for the server PC, for example `192.168.1.20`.
-Restart the PC.
+1. Install all Windows updates and restart.
+2. **Settings → System → Power:** Sleep **Never** (the screen may turn off).
+3. **Settings → Time & language:** time zone **(UTC+05:30) Chennai, Kolkata, Mumbai, New Delhi**, set automatically.
+4. In the PC's BIOS/UEFI (ask the shop if unsure), set **"Restore on AC power loss: Power On"**, so the
+   PC switches itself back on after a power cut.
+5. **Fixed address:** in the router's admin page find **DHCP reservation** (also called "Static lease"
+   or "Address reservation") and reserve an address for the server PC, for example `192.168.1.20`.
+   Restart the PC. Check: in PowerShell, `ipconfig` shows that address as "IPv4 Address".
+   This guide calls it **the server address**.
 
-Check: open PowerShell and run `ipconfig`. The "IPv4 Address" shows the reserved address.
-The rest of this guide calls it **the server address**.
+## 3. Copy Hirefolios to the server PC
 
-## 3. Install Docker Desktop
+Your developer gives you a file like `hirefolios-0.1.0.zip` (on a USB stick or by download).
 
-1. Download Docker Desktop for Windows from docker.com and run the installer (keep "Use WSL 2").
-2. Restart when asked, open Docker Desktop and accept its terms.
-3. In Docker Desktop → **Settings → General**, tick **Start Docker Desktop when you sign in**.
+1. Copy it to the server PC, for example to **Downloads**.
+2. Right-click the zip → **Properties** → if there is an **Unblock** box at the bottom, tick it → **OK**.
+3. Right-click the zip → **Extract All** → **Extract**. You get a folder `hirefolios-0.1.0` with
+   `app`, `docs`, `scripts` and `tools` inside.
 
-Check: in PowerShell, `docker version` prints a "Server" section without errors.
+## 4. Run the installer
 
-Docker only runs while a Windows user is signed in on the server PC. After a power cut, switch
-the PC on and sign in; Hirefolios starts by itself a minute later.
+1. Click **Start**, type **PowerShell**, right-click **Windows PowerShell** → **Run as administrator** → **Yes**.
+2. Go to the extracted folder (change the path if you extracted it somewhere else) and start the installer:
 
-## 4. Make the folders
+   ```powershell
+   cd $HOME\Downloads\hirefolios-0.1.0
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1
+   ```
 
-In PowerShell:
+3. Answer the questions:
 
-```powershell
-New-Item -ItemType Directory -Force C:\hirefolios-data\uploads, C:\hirefolios-backups
-```
+   | Question | Answer |
+   |---|---|
+   | Server address staff will type | Press **Enter** (simplen.hirefolios.in) |
+   | Choose A or B | Press **Enter** for **B** (works without internet). For A see step 7. |
+   | Admin email | Your email; you sign in with it |
+   | Admin password, twice | 8 characters or more. Nothing shows while you type: that is normal |
 
-`C:\hirefolios-data\uploads` holds candidate photos and CVs. `C:\hirefolios-backups` holds the
-nightly backups. Do not share either folder on the network.
+4. Wait. The first time takes 5 to 15 minutes (installing PostgreSQL takes most of it). The installer:
+   - checks Windows, admin rights, free disk and that ports 80 and 443 are free;
+   - installs **PostgreSQL 16** with Windows' own installer (winget), or uses one already installed
+     (then it asks for that PostgreSQL's `postgres` password);
+   - creates the database and its own database login with a random password;
+   - writes the settings file `C:\hirefolios\.env` (random passwords, never shown; only
+     Administrators and the Hirefolios service can read it);
+   - copies the program to `C:\hirefolios`, photos and CVs go to `C:\hirefolios-data\uploads`;
+   - sets up the three services (start with Windows, restart by themselves if they stop);
+   - opens ports 80 and 443 in the Windows Firewall, for **private** networks only;
+   - schedules the backup at **6:15 pm, Monday to Saturday**;
+   - checks that https://simplen.hirefolios.in answers and that your admin account can sign in.
+5. At the end it prints a green **"installed and running"** box with:
+   - the server address on the network,
+   - for option B, the **certificate fingerprint** (16 groups of 4 letters/digits).
+     **Write it down or photograph it**; you compare it on every PC in step 6. It is also saved in
+     `C:\hirefolios\certificate-fingerprint.txt`.
 
-## 5. Fill in the settings file
+Check: on the server PC, open Chrome or Edge at **https://simplen.hirefolios.in**. The sign-in page
+opens with a padlock and no warning.
 
-1. In `C:\hirefolios`, copy `.env.production.example` to `.env.production`.
-2. Open `.env.production` in Notepad and fill in:
-   - `POSTGRES_PASSWORD` and `BETTER_AUTH_SECRET`: one random value each. Make one by running
-     this in PowerShell and copying the result (run it twice for two values):
-     ```powershell
-     $b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); -join ($b | % { $_.ToString('x2') })
-     ```
-   - `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` (8+ characters), `SEED_ADMIN_NAME`: the first admin account.
-   - `UPLOAD_HOST_DIR`: leave `C:\hirefolios-data\uploads` unless you chose another folder.
-   - `CADDYFILE` and `CLOUDFLARE_API_TOKEN`: see step 6.
-3. Save. Keep this file private: it holds the passwords. Never email it or put it in a shared folder.
+If the installer stops with a red message, it says what to do. Fix that and run the **same command
+again**: it is safe to re-run, and it keeps everything already done (settings, database, files).
 
-## 6. Choose how HTTPS works
+- *"Port 443 is used by ..."*: another program (often IIS, Skype or another web server) holds the port.
+  Stop or uninstall it, then run the installer again.
+- *"winget could not install PostgreSQL"* or **no internet on the server PC**: on any PC with internet,
+  download the **PostgreSQL 16, Windows x86-64** installer from
+  https://www.enterprisedb.com/downloads/postgres-postgresql-downloads, copy it to the server PC and run:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -PostgresInstaller C:\path\to\postgresql-16.x-windows-x64.exe`
+  (everything else the installer needs is inside the Hirefolios folder).
+- *"Windows treats the network ... as Public"*: answer **Y** if it is your office network, otherwise
+  other PCs cannot connect.
 
-The webcam only works on an `https://` address, so Hirefolios always uses HTTPS. Pick one option.
-
-### Option A: real certificate from Let's Encrypt (recommended if you use Cloudflare)
-
-No setup on the other PCs. Needs the internet on the server PC about once every two months
-(to renew the certificate).
-
-1. Sign in to Cloudflare → **My Profile → API Tokens → Create Token**.
-2. Use the **Edit zone DNS** template. Under "Zone Resources" pick **Specific zone → hirefolios.in**.
-   Create the token and copy it (Cloudflare shows it only once).
-3. In `.env.production` set `CADDYFILE=Caddyfile.cloudflare` and paste the token after `CLOUDFLARE_API_TOKEN=`.
-
-### Option B: the server's own certificate (no internet, no Cloudflare)
-
-In `.env.production` set `CADDYFILE=Caddyfile.internal`. After step 8 you install the server's
-certificate once on every office PC (step 9).
-
-## 7. Point the name at the server PC
+## 5. Let every PC find the server
 
 Every office PC must find `simplen.hirefolios.in` at the server address. Use **one** of these:
 
-- **Router (best, one place):** in the router's admin page, find **Local DNS**, **Static DNS** or
-  **Host mapping** and add `simplen.hirefolios.in` → the server address.
-- **Cloudflare (option A only):** add a DNS record: type `A`, name `simplen`, content = the server
-  address, proxy status **DNS only** (grey cloud). Some routers block this ("DNS rebinding
-  protection"); if the check below fails, use the router or hosts-file method.
-- **Hosts file on each PC:** open Notepad **as administrator**, open
-  `C:\Windows\System32\drivers\etc\hosts`, add a line such as
-  `192.168.1.20   simplen.hirefolios.in` and save. Do the same on the server PC itself.
+- **Router (best, one place):** in the router's admin page find **Local DNS**, **Static DNS**,
+  **DNS host mapping** or **Hostname mapping** and add `simplen.hirefolios.in` → the server address.
+- **Hosts file on each PC:** copy the `scripts` folder to a USB stick. On each PC, open PowerShell
+  **as administrator** and run (with your server address):
+
+  ```powershell
+  powershell -NoProfile -ExecutionPolicy Bypass -File E:\scripts\set-hosts.ps1 -ServerIp 192.168.1.20
+  ```
+
+  (The server PC itself is already done by the installer.) To undo: `set-hosts.ps1 -Remove`.
 
 Check, on every PC: `ping simplen.hirefolios.in` shows the server address.
 
-## 8. Start Hirefolios
+## 6. Trust the server's certificate on each PC (option B)
 
-In PowerShell:
+Only for option B. Do this once on **every** office PC that opens Hirefolios (HR desk, interviewers,
+managers, the TV's PC). The server PC is already done.
 
-```powershell
-cd C:\hirefolios
-docker compose --env-file .env.production up -d --build
-```
-
-The first start takes 5 to 15 minutes (it downloads and builds everything). Later starts take seconds.
-
-Check:
+On each PC, PowerShell **as administrator**, from the USB stick with the `scripts` folder:
 
 ```powershell
-docker compose --env-file .env.production ps
+powershell -NoProfile -ExecutionPolicy Bypass -File E:\scripts\trust-certificate.ps1 -Server simplen.hirefolios.in
 ```
 
-`db`, `app` and `caddy` show **running** (app shows **healthy** after about a minute). Then open
-**https://simplen.hirefolios.in/api/health** in a browser on the server PC: it shows `"status":"ok"`.
+It shows a fingerprint. **Compare it with the one the installer printed.** If they are the same,
+type the **last 4 characters**. Close and reopen Chrome / Edge.
 
-If other PCs cannot open the address but the server PC can, allow the ports through the Windows
-firewall (PowerShell as administrator):
+Check: https://simplen.hirefolios.in opens with a padlock and no warning.
+
+- No network to the server yet? Copy `C:\hirefolios\hirefolios-root.crt` from the server to the USB stick
+  and use `-CertFile E:\hirefolios-root.crt` instead of `-Server ...`.
+- Firefox: open `about:config`, set `security.enterprise_roots.enabled` to `true`, restart Firefox.
+- The certificate is valid for about 10 years. A new PC later: run the same command on it.
+
+## 7. Option A: Let's Encrypt through Cloudflare (instead of B)
+
+Use this only if Simplen manages `hirefolios.in` in Cloudflare and the server PC has internet.
+Then no PC needs step 6. The server PC needs the internet about once every two months (renewal).
+
+1. Cloudflare → **My Profile → API Tokens → Create Token** → template **Edit zone DNS** →
+   Zone Resources: **Specific zone → hirefolios.in** → create, copy the token (shown only once).
+2. Run the installer (step 4), answer **A**, and paste the token when asked (it is not shown).
+3. Step 5 is still needed (the name must point at the server address inside the office).
+
+## 8. First sign-in and staff accounts
+
+1. Open https://simplen.hirefolios.in and sign in with the admin email and password from step 4.
+2. **Staff:** add HR, managers, interviewers, and one **display** account for the lobby TV.
+   Each person gets a temporary password and must choose their own at first sign-in.
+3. On the **Candidates** page the admin sees a **Server status** box: database, free disk, last backup.
+
+## 9. HR desk: webcam test
+
+1. Plug the USB webcam into the HR desk PC. Open https://simplen.hirefolios.in, sign in as HR.
+2. **+ New candidate** → type a test mobile → **Find** → fill the details → consent → **Skip CV** →
+   on the Photo step the picture must show. Chrome asks once to allow the camera: **Allow**.
+3. Two webcams? Pick the right one in the **Webcam** list; that PC remembers it.
+4. Cancel the test candidate (or finish it and erase it: **Privacy → Log a request → Erasure**).
+
+HR can **always register a candidate by typing everything by hand**: no step needs a CV, a scanner or
+the internet. If the webcam is missing or broken, use **Upload a photo file instead**.
+
+If the photo step says the webcam needs the secure address, the browser is not on `https://`, or step 6
+was not done on that PC.
+
+## 10. Lobby TV
+
+On the TV's PC: Chrome → https://simplen.hirefolios.in → sign in with the **display** account →
+press **F11** (full screen) → turn the chime on. It stays signed in for 30 days. The TV only shows
+token numbers and rooms, never names or photos.
+
+## 11. Daily use
+
+- Keep the server PC **on**. Nothing to start by hand: after a restart or power cut, the three services
+  start by themselves within a minute or two (no one needs to sign in to Windows).
+- The backup runs at 6:15 pm Monday to Saturday. If the PC was off at that time, it runs as soon as the
+  PC is back on. The **Server status** box shows the last backup time.
+- Windows updates may restart the PC at night; that is fine.
+
+## 12. Backups
+
+Each backup is a folder in `C:\hirefolios-backups` named by date and time (for example
+`2026-11-11_181500`), holding `database.dump` (all records), `uploads.tar.gz` (photos and CVs)
+and `manifest.txt` (checksums). `backup.log` lists every run. A backup that was cut off (power
+cut) is left as `...partial` and never used; it is cleaned up the next day.
+
+Backups older than 14 days are deleted (the newest 3 are always kept).
+
+**Run one by hand** (PowerShell as administrator):
 
 ```powershell
-New-NetFirewallRule -DisplayName "Hirefolios HTTPS" -Direction Inbound -Protocol TCP -LocalPort 80,443 -Action Allow
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\hirefolios\scripts\backup.ps1
 ```
 
-If the start fails because port 80 or 443 is busy, another program (often IIS or Skype) is using it; stop that program.
+**Second copy (strongly recommended):** a backup on the same disk does not survive a dead disk or theft.
+Open Notepad **as administrator**, open `C:\hirefolios\.env`, set the line
+`BACKUP_COPY_DIR=E:\hirefolios-backups` (your USB drive letter) and save. Every backup is then copied
+there too; if the drive is missing, the backup still runs and `backup.log` says the copy failed.
+To keep more days, change `BACKUP_KEEP_DAYS=14`. Do not change other lines in that file.
 
-## 9. Option B only: trust the server's certificate on each PC
+## 13. Restoring a backup
 
-Copy the certificate out of the server (on the server PC, in `C:\hirefolios`):
+Only when something has gone wrong. Restoring **replaces all current data** with the backup.
 
 ```powershell
-docker compose --env-file .env.production cp caddy:/data/caddy/pki/authorities/local/root.crt C:\hirefolios-backups\hirefolios-root.crt
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\hirefolios\scripts\restore.ps1 -From C:\hirefolios-backups\2026-11-11_181500
 ```
 
-Then, on **every** office PC (including the server PC), copy `hirefolios-root.crt` over (USB stick
-or a shared folder) and in PowerShell **as administrator**:
+It checks the backup's files, asks you to type `RESTORE`, stops Hirefolios, **backs up the current
+state first**, puts the database back in one step (if anything fails, nothing changes), puts the
+photos and CVs back, starts Hirefolios and checks it. The old photos folder is kept next to the new one
+(`C:\hirefolios-data\uploads.before-restore-...`) until you delete it.
+
+If the current data is too damaged to back up, it says so and asks you to type `CONTINUE` to restore anyway.
+
+**Server PC died?** Set up the new PC with steps 2 to 4 (a new admin account is fine; the restore
+brings the old accounts back), copy the backup folder from the USB drive, run the restore. Then repeat
+step 6 on every PC (the new server has a new certificate).
+
+## 14. Installing a new version
+
+Your developer gives you a new zip (for example `hirefolios-0.2.0.zip`). Unblock and extract it (step 3),
+then in PowerShell as administrator:
 
 ```powershell
-certutil -addstore -f Root C:\path\to\hirefolios-root.crt
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\hirefolios\scripts\update.ps1 -From $HOME\Downloads\hirefolios-0.2.0
 ```
 
-(Or double-click the file → **Install Certificate → Local Machine → Place all certificates in the
-following store → Trusted Root Certification Authorities**.) Restart the browser.
+It stops Hirefolios (a minute; do it outside drive hours), **backs up first**, puts the new version in
+place, starts it (database changes are applied then) and checks it. If the new version does not come up
+healthy, it **goes back to the old version by itself** (and puts the database back if it was changed),
+says "Update ... FAILED and was rolled back", and keeps the failed version for your developer.
 
-Check: https://simplen.hirefolios.in opens with a padlock and no warning. This certificate
-stays valid for 10 years; keep `hirefolios-root.crt` for new PCs.
-
-## 10. First sign-in
-
-1. Open https://simplen.hirefolios.in and sign in with `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`.
-2. Click **Change password** (top right, under your name) and set a new one now: the password in
-   `.env.production` is only for this first sign-in.
-3. In `.env.production`, clear the `SEED_ADMIN_PASSWORD=` value (leave the line) so the password
-   is no longer stored in the file. Nothing needs restarting.
-4. Go to **Staff** and add HR, managers, interviewers and a **display** account for the lobby TV.
-   Each person sets their own password at first sign-in.
-5. **Candidates** page: the admin sees a **Server status** box (database, free disk, last backup).
-
-## 11. Nightly backup (6:15 pm, Monday to Saturday)
-
-Each backup is a folder in `C:\hirefolios-backups` named by date and time, holding
-`database.dump` (all records) and `uploads.tar.gz` (photos and CVs). Folders older than 14 days
-are removed. `backup.log` in the same folder lists every run.
-
-Run one by hand first, in PowerShell:
+## 15. Uninstalling
 
 ```powershell
-cd C:\hirefolios
-powershell -NoProfile -ExecutionPolicy Bypass -File deploy\backup.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\hirefolios\scripts\uninstall.ps1
 ```
 
-Check: it prints `Backup saved: ...`, and the Server status box shows the time.
+Type `UNINSTALL` to confirm. It removes the services, the backup task, the firewall rule and
+`C:\hirefolios`. **Candidate data, the database and backups are kept**, so installing again later
+brings everything back. To delete them too, add `-RemoveData` and/or `-RemoveBackups` (each asks you to
+type `DELETE`); `-RemoveData -RemovePostgreSQL` also removes PostgreSQL if the installer installed it.
+On other PCs: `trust-certificate.ps1 -Remove` and `set-hosts.ps1 -Remove`.
 
-Then schedule it (PowerShell, signed in as the same user that runs Docker Desktop):
-
-```powershell
-schtasks /create /tn "Hirefolios backup" /sc weekly /d MON,TUE,WED,THU,FRI,SAT /st 18:15 /tr "powershell -NoProfile -ExecutionPolicy Bypass -File C:\hirefolios\deploy\backup.ps1"
-```
-
-Check: open **Task Scheduler**, find "Hirefolios backup", right-click → **Run**, then look at
-`C:\hirefolios-backups\backup.log`. The PC must be on and signed in at 6:15 pm.
-
-**Keep a copy somewhere else.** A backup on the same disk does not survive a dead disk or theft.
-Add `-OffsiteDir E:\hirefolios-backups` (a USB disk, or a folder synced by Google Drive / OneDrive)
-to the end of the command in the task. To keep more days, add `-KeepDays 30`.
-
-## 12. Restoring a backup
-
-Only when something has gone wrong (for example a broken disk replaced and Hirefolios
-installed again). Restoring **replaces all current data** with the backup.
-
-```powershell
-cd C:\hirefolios
-powershell -NoProfile -ExecutionPolicy Bypass -File deploy\restore.ps1 -From C:\hirefolios-backups\2026-11-11_1815
-```
-
-It asks you to type `RESTORE`, makes a backup of the current state first, puts the database and
-files back, and keeps the old uploads folder next to the new one (`...uploads.before-restore-...`)
-until you delete it.
-
-On a new PC: do steps 1 to 8 with the **same** `.env.production` (same passwords), copy the
-backup folder over, then run the restore.
-
-## 13. Installing a new version
-
-1. Run a backup by hand (step 11).
-2. Replace the files in `C:\hirefolios` with the new version. Keep your `.env.production`.
-3. `docker compose --env-file .env.production up -d --build`
-
-Database changes are applied automatically when the app starts.
-
-## 14. When something is wrong
+## 16. When something is wrong
 
 | What you see | What to do |
 |---|---|
-| Page does not open anywhere | Is the server PC on and signed in, with Docker Desktop running? Then `docker compose --env-file .env.production ps` |
-| Opens on the server PC but not others | Step 7 check (`ping`) and the firewall rule in step 8 |
-| Certificate warning | Option B: step 9 not done on that PC. Option A: check `docker compose --env-file .env.production logs caddy --tail 50` |
-| Webcam blocked | The address must start with `https://`. Click the camera icon in the address bar → Allow |
-| Server status shows a problem | `docker compose --env-file .env.production logs app --tail 100` and send the output to your developer |
-| Last backup is old | Look at `C:\hirefolios-backups\backup.log` and the task in Task Scheduler |
+| Page does not open on any PC | Is the server PC on? Open `services.msc`: the three services in the table at the top must say **Running**. Right-click → **Start** if not. |
+| Opens on the server PC but not on others | `ping simplen.hirefolios.in` on that PC (step 5). Network must be **Private** on the server PC (Settings → Network → your network → Private). |
+| Certificate warning | Option B: step 6 not done on that PC (or the server was reinstalled: do step 6 again). |
+| Webcam blocked | The address must start with `https://`. Click the camera icon in the address bar → **Allow**. Or use **Upload a photo file instead**. |
+| Server status box shows a problem | Database: is `postgresql-x64-16` running? Disk: free some space. Send `C:\hirefolios\logs` to your developer. |
+| Last backup is old | Look at `C:\hirefolios-backups\backup.log`; Task Scheduler → "Hirefolios backup" → Last Run Result. |
+| Update says FAILED and rolled back | Nothing to do on drive day: the old version runs. Send `C:\hirefolios\logs\update-*.log` to your developer. |
+| Anything else | `https://simplen.hirefolios.in/api/health` shows the status without signing in. Send `C:\hirefolios\logs` to your developer. |
 
-Send logs to your developer, never `.env.production`.
-
-## Linux server (optional)
-
-The same files work on a Linux server with Docker: use `deploy/backup.sh` and
-`deploy/restore.sh` (each explains its options at the top) and a cron line such as
-`15 18 * * 1-6 /opt/hirefolios/deploy/backup.sh`. Make the uploads folder writable by user id 1001
-(`sudo chown 1001:1001 /srv/hirefolios/uploads`).
+Send logs to your developer, **never** `C:\hirefolios\.env` (it holds the passwords).

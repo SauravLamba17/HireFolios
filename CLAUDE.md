@@ -4,8 +4,9 @@ Walk-in recruitment system for Simplen Billing e-Services (medical billing / RCM
 PC-based: HR registers each walk-in on an office PC with a webcam (details, live photo, CV files
 or webcam photos of a paper CV); HR turns the screen and the candidate only reads the notice and
 taps consent. Interviewers, managers and the lobby TV use other office PCs in a browser.
-Standalone (not part of SESS). Runs on one office PC with Docker + Caddy (HTTPS) at
-https://simplen.hirefolios.in; later sold to other companies as SaaS.
+Standalone (not part of SESS). Runs natively on one Windows 10/11 office PC as three Windows services
+(PostgreSQL 16, the app's Node.js standalone server via WinSW, Caddy for HTTPS) at
+https://simplen.hirefolios.in; later sold to other companies as SaaS. No Docker for Simplen.
 
 Read `PROGRESS.md` first and continue from where it stops.
 
@@ -64,9 +65,10 @@ Read `PROGRESS.md` first and continue from where it stops.
 | `src/app/(staff)/dashboard/` | Candidate list + search, `candidates/[id]` profile (offer / joined, corrections), `reports`, `privacy`, `audit`, `settings`, `users` |
 | `src/app/api/` | `intake`, `candidates/lookup`, `candidates/[id]`, `applications/[id]`, `files/[id]`, `exports/*`, `privacy/*`, `audit/export`, `health`, `settings/*`, `users/*` |
 | `scripts/smoke.ts` | `npm run smoke`: end-to-end API check against a running server, in throwaway tenants |
-| `e2e/` | Playwright tests (two fake webcams, desk sizes 1440 / 1366x768 / 1024) |
-| `Dockerfile`, `docker-compose.yml`, `.env.production.example` | Production: db + app (non-root, migrates on start) + Caddy |
-| `deploy/` | Caddyfiles (A: Let's Encrypt via Cloudflare DNS, B: `tls internal`), backup / restore scripts (.ps1 and .sh) |
+| `e2e/` | Playwright tests (two fake webcams, desk sizes 1440 / 1366x768 / 1024); `manual-intake.spec.ts` = hard rule 13 |
+| `scripts/package.mjs` | `npm run package [-- --version X]`: `release/hirefolios-<version>/` + `.zip` (standalone app, static, migrations, bundled `node.exe`, `VERSION.txt` + `release.env`, scripts, pinned tools, docs; no source, no `.env`, scans for this PC's secrets) |
+| `deploy/windows/` | Office PC: `install.ps1`, `update.ps1` (auto rollback), `backup.ps1`, `restore.ps1`, `uninstall.ps1`, `trust-certificate.ps1` + `set-hosts.ps1` (each office PC), `common.ps1` (shared helpers, **pinned WinSW + Caddy versions and SHA-256**), Caddyfile templates (B: `tls internal`, A: Cloudflare DNS), WinSW service XML, `PSScriptAnalyzerSettings.psd1` |
+| `deploy/docker/` | Optional, for future cloud / SaaS only. Not used for Simplen, not maintained or tested |
 | `docs/INSTALL.md`, `docs/FIRST-DRIVE-CHECKLIST.md` | Office PC install guide (non-developer), first drive day checklist |
 
 ## Patterns
@@ -102,7 +104,7 @@ Read `PROGRESS.md` first and continue from where it stops.
 ```bash
 cp .env.example .env          # then fill BETTER_AUTH_SECRET and SEED_ADMIN_*
 npm install
-npm run db:up                 # Postgres 16 in Docker (docker-compose.dev.yml)
+npm run db:up                 # dev Postgres 16 in Docker (docker-compose.dev.yml), or any local PostgreSQL 16
 npm run db:migrate
 npm run db:seed
 npm run dev                   # http://localhost:3000
@@ -114,10 +116,15 @@ npm run test:e2e              # needs the DB seeded and a server; PW_CHANNEL=chr
 npm run smoke                 # API smoke test against SMOKE_BASE_URL (default http://localhost:3000)
 npm run db:generate -- --name=<change>   # after editing schema.ts
 
-# Production (office PC, see docs/INSTALL.md)
-docker compose --env-file .env.production up -d --build
-powershell -File deployackup.ps1      # restore: deploy
-estore.ps1 -From <backup folder>
+# Production (office PC, Windows, see docs/INSTALL.md)
+npm run package               # -> release/hirefolios-<version>/ and .zip (copy to the office PC)
+# on the office PC, PowerShell as Administrator, in the unpacked release folder:
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\hirefolios\scripts\update.ps1 -From <new release folder or .zip>
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\hirefolios\scripts\backup.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\hirefolios\scripts\restore.ps1 -From C:\hirefolios-backups\<folder>
+# lint the scripts (PSScriptAnalyzer module):
+Invoke-ScriptAnalyzer -Path deploy\windows -Settings deploy\windows\PSScriptAnalyzerSettings.psd1
 ```
 
 `UPLOAD_DIR` must be an absolute folder (the standalone server runs from `.next/standalone`, which
