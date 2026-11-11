@@ -1,6 +1,7 @@
 // Drive day: today's drive per location, its panels (rooms), the queue and every move on it.
 // Each action runs in one transaction and writes queue_events + audit_log (ids and codes only);
 // callers publish a change ping (src/lib/live.ts) after it commits.
+import "server-only";
 import { and, asc, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
 import { applications, consents, drives, locations, panels, queueEvents, rejectReasons, scorecards, stages, tenants, users } from "@/db/schema";

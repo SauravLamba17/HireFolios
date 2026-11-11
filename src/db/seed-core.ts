@@ -1,5 +1,6 @@
 // Idempotent seed: safe to run again; existing rows are left as they are.
 // Used by `npm run db:seed` (src/db/seed.ts) and, with SEED_ON_START=1, by the server at start-up.
+import "server-only";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { jobs, locations, rejectReasons, stages, tenants, users } from "@/db/schema";

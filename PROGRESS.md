@@ -171,6 +171,20 @@ Phase 3 is done except the Docker tests (Docker is not installed on the dev PC y
 - Still open from earlier phases: `npm audit` findings in build tools (fix needs Next 16), staff emails unique across
   tenants, in-memory sign-in rate limit, staff can rename themselves via `update-user`, in-process live-update bus.
 
+### Known issues → fixed (after Phase 3)
+
+- **`next dev` failed on every page** with `UnhandledSchemeError: Reading from "node:crypto"` (production builds were
+  fine). Chain: `src/instrumentation.ts` → `src/lib/boot.ts` → `drizzle-orm/postgres-js/migrator` → `drizzle-orm/migrator`
+  → `node:crypto`, compiled for the **edge** runtime too: the `if (NEXT_RUNTIME !== "nodejs") return;` early return
+  does not stop webpack from following the dynamic import after it. Fixed: `register()` only does
+  `if (process.env.NEXT_RUNTIME === "nodejs") await import("./instrumentation-node")`, and all start-up work moved
+  to `src/instrumentation-node.ts` (was `boot.ts`). Every server-only module (`src/db/index.ts`, `seed-core.ts` and the
+  db / node / auth libs in `src/lib`) now starts with `import "server-only"`, so a client component importing one
+  fails at compile time with a clear message (checked). `tsx` scripts run with `--conditions=react-server` and vitest
+  aliases `server-only` to its empty module. New `npm run dev:check` starts `next dev`, signs in as the seed admin,
+  loads 13 key pages and fails on build errors, 5xx, or the deletion job not starting exactly once (it fails on the
+  old `instrumentation.ts`).
+
 ## Phase 4 — next
 
 - [ ] One-time QR link so a candidate can upload their CV from their own phone (through a Cloudflare Tunnel)

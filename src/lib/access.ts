@@ -1,5 +1,6 @@
 // Who may open a candidate's profile and files. Interviewers: only candidates who were ever called to a
 // panel they sat on. Everyone with the "candidates" permission: all candidates of their tenant.
+import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { mayViewCandidate } from "@/lib/flow";

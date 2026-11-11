@@ -1,5 +1,6 @@
 // Automatic deletion (retention) and "erase now". Decisions come only from src/lib/retention.ts.
 // Database rows go in one transaction per candidate; files on disk are removed after it commits.
+import "server-only";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -165,6 +166,7 @@ async function tick() {
 
 export function startPurgeScheduler() {
   if (g.purgeTimer) return;
+  console.log("deletion job scheduled (every 30 min)");
   g.purgeTimer = setInterval(tick, EVERY_MS);
   setTimeout(tick, 15_000); // shortly after start-up
 }

@@ -1,4 +1,5 @@
 // Candidate list search: filters come from the URL, every query is scoped to the staff member's tenant.
+import "server-only";
 import { sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";

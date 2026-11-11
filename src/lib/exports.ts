@@ -1,5 +1,6 @@
 // Excel / CSV exports: column lists and row shaping (pure, unit-tested) plus the writers.
 // Never photos or files; personal data only where the export is meant for it (joined employees).
+import "server-only";
 import ExcelJS from "exceljs";
 import { experienceLabel, OUTCOME_LABELS } from "@/lib/options";
 import { formatDayIST } from "@/lib/ist";

@@ -1,4 +1,5 @@
 // Server health for /api/health and the admin status card. No personal data.
+import "server-only";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { sql } from "drizzle-orm";

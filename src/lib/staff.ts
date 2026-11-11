@@ -1,3 +1,4 @@
+import "server-only";
 import { hashPassword } from "better-auth/crypto";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";

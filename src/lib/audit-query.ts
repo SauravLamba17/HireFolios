@@ -1,4 +1,5 @@
 // Audit log viewer / CSV: same filters for both (date range IST, action, actor). Tenant always first.
+import "server-only";
 import { and, desc, eq, gte, isNull, lt, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, users } from "@/db/schema";

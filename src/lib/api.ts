@@ -1,3 +1,4 @@
+import "server-only";
 import { db, isUniqueViolation, type Tx } from "@/db";
 import { FlowError, NotFoundError } from "@/lib/flow";
 import { publish } from "@/lib/live";

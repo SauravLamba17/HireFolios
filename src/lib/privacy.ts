@@ -1,5 +1,6 @@
 // Rights requests (DPDP): log, track, and act — access (ZIP), correction (edit), erasure (same code as the
 // deletion job), grievance (notes only). Audit rows hold ids and codes only.
+import "server-only";
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { zipSync, strToU8 } from "fflate";
 import { db, type Tx } from "@/db";

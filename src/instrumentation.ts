@@ -1,12 +1,7 @@
-// Next.js calls register() once when the server starts.
+// Next.js calls register() once per runtime when the server starts. Keep this file free of
+// top-level imports: it is also compiled for the edge runtime. All start-up work is in instrumentation-node.ts.
 export async function register() {
-  if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  const { boot } = await import("./lib/boot");
-  try {
-    await boot();
-  } catch (e) {
-    // Don't serve on a half-migrated database: exit so Docker (restart: unless-stopped) tries again.
-    console.error("start-up failed:", e);
-    process.exit(1);
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    await import("./instrumentation-node");
   }
 }

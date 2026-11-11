@@ -51,7 +51,7 @@ Read `PROGRESS.md` first and continue from where it stops.
 | `src/lib/reports.ts` | Report date range + chart helpers; `dashboard/reports` runs the queries (real rows, "as of" time) |
 | `src/lib/audit-query.ts` | Audit viewer filters (`dashboard/audit`, CSV at `api/audit/export`) |
 | `src/lib/health.ts`, `src/app/api/health/` | Server status (DB, free disk, last backup, version), no auth, no personal data; admin status card |
-| `src/instrumentation.ts` → `src/lib/boot.ts` | Start-up: migrations (`RUN_MIGRATIONS=1`), seed (`SEED_ON_START=1`), deletion job (unless `PURGE_JOB=off`) |
+| `src/instrumentation.ts` → `src/instrumentation-node.ts` | Start-up (Node runtime only; keep `instrumentation.ts` import-free, it is also compiled for edge): migrations (`RUN_MIGRATIONS=1`), seed (`SEED_ON_START=1`), deletion job (unless `PURGE_JOB=off`) |
 | `src/lib/live.ts`, `src/app/api/live/` | Server-Sent Events: per-tenant "change" pings only (no data); pages re-read their own state |
 | `src/lib/access.ts` | Interviewers see only candidates they were called to interview (pages and files) |
 | `src/lib/api.ts` | `act()`: transaction + live ping + rule errors as 400/404 |
@@ -74,6 +74,8 @@ Read `PROGRESS.md` first and continue from where it stops.
 - Creating staff goes through `createStaff` (hashes with Better Auth's scrypt). Public sign-up is off.
   Admin-created and admin-reset passwords are temporary (`users.must_change_password`): `requireStaff`
   sends the user to `/account/password` and `requireStaffApi` answers 403 until they change it.
+- Server-only modules (db, `node:*`, auth, anything with secrets) start with `import "server-only"`; client components
+  import only pure helpers (`intake`, `options`, `ist`, `notice`, `money`, `send`, `auth-client`).
 - Layouts use `getStaff()`; pages use `requireStaff(permission)` (which also enforces the password rule).
 - Intake validation lives once in `src/lib/intake.ts`; the wizard and `POST /api/intake` both use it.
 - Candidate writes must also write `search_text` (`searchTextFor` in `candidate-search.ts`).
@@ -102,6 +104,7 @@ npm run db:seed
 npm run dev                   # http://localhost:3000
 
 npm run typecheck && npm run lint && npm test
+npm run dev:check             # starts next dev (own port/folder), loads key pages, fails on dev-only build errors
 npm run build && npm start    # standalone server (node .next/standalone/server.js)
 npm run test:e2e              # needs the DB seeded and a server; PW_CHANNEL=chrome, E2E_BASE_URL, optional E2E_LAN_URL
 npm run smoke                 # API smoke test against SMOKE_BASE_URL (default http://localhost:3000)
@@ -109,7 +112,8 @@ npm run db:generate -- --name=<change>   # after editing schema.ts
 
 # Production (office PC, see docs/INSTALL.md)
 docker compose --env-file .env.production up -d --build
-powershell -File deployackup.ps1      # restore: deployestore.ps1 -From <backup folder>
+powershell -File deployackup.ps1      # restore: deploy
+estore.ps1 -From <backup folder>
 ```
 
 `UPLOAD_DIR` must be an absolute folder (the standalone server runs from `.next/standalone`, which

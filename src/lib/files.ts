@@ -1,5 +1,6 @@
 // Candidate files on disk, under UPLOAD_DIR/<tenant>/<candidate>/. Never inside public/;
 // served only by GET /api/files/[id] after a tenant check.
+import "server-only";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
