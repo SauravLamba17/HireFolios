@@ -5,7 +5,7 @@
 set -eu
 FROM=${1:?Usage: deploy/restore.sh <backup folder> [BACKUP_DIR]}
 BACKUP_DIR=${2:-/var/backups/hirefolios}
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd "$(dirname "$0")" && pwd)
 ENV_FILE="$ROOT/.env.production"
 [ -f "$ENV_FILE" ] || { echo "Missing $ENV_FILE" >&2; exit 1; }
 cd "$ROOT"

@@ -1,5 +1,6 @@
+# OPTIONAL, for a future cloud / SaaS setup. NOT used for Simplen (see deploy/windows) and not maintained or tested.
 # Production: Postgres + the app + Caddy (HTTPS). Settings come from .env.production:
-#   docker compose --env-file .env.production up -d --build
+#   cd deploy/docker && docker compose --env-file .env.production up -d --build
 # See docs/INSTALL.md. The development database is docker-compose.dev.yml.
 name: hirefolios
 
@@ -20,7 +21,9 @@ services:
       retries: 20
 
   app:
-    build: .
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
     image: hirefolios-app
     restart: unless-stopped
     depends_on:
@@ -40,7 +43,7 @@ services:
       - ${UPLOAD_HOST_DIR:?Set UPLOAD_HOST_DIR in .env.production}:/data/uploads
 
   caddy:
-    build: deploy/caddy
+    build: ./caddy
     image: hirefolios-caddy
     restart: unless-stopped
     depends_on:
@@ -54,7 +57,7 @@ services:
     volumes:
       # Option A (Let's Encrypt via Cloudflare DNS): CADDYFILE=Caddyfile.cloudflare
       # Option B (Caddy's own certificate, installed on each PC): CADDYFILE=Caddyfile.internal
-      - ./deploy/${CADDYFILE:-Caddyfile.internal}:/etc/caddy/Caddyfile:ro
+      - ./${CADDYFILE:-Caddyfile.internal}:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
 

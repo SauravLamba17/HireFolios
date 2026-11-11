@@ -7,7 +7,7 @@ param(
   [string]$Confirm = ""
 )
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
+$root = $PSScriptRoot
 $envFile = Join-Path $root ".env.production"
 if (-not (Test-Path $envFile)) { throw "Missing $envFile" }
 Set-Location $root

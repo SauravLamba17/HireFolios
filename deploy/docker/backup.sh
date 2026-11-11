@@ -6,7 +6,7 @@ set -eu
 BACKUP_DIR=${1:-/var/backups/hirefolios}
 KEEP_DAYS=${2:-14}
 OFFSITE_DIR=${3:-}
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd "$(dirname "$0")" && pwd)
 ENV_FILE="$ROOT/.env.production"
 [ -f "$ENV_FILE" ] || { echo "Missing $ENV_FILE" >&2; exit 1; }
 cd "$ROOT"

@@ -1,3 +1,4 @@
+# OPTIONAL, for a future cloud / SaaS setup. NOT used for Simplen (see deploy/windows) and not maintained or tested.
 # Production image: Next.js standalone server, non-root, migrations + seed on start.
 # Built by docker-compose.yml (`docker compose --env-file .env.production up -d --build`).
 
