@@ -1,0 +1,22 @@
+<!-- WinSW service definition for the Hirefolios app. install.ps1 fills in the __NAME__ values. -->
+<service>
+  <id>hirefolios</id>
+  <name>Hirefolios</name>
+  <description>Hirefolios walk-in recruitment (Node.js server on 127.0.0.1:__APP_PORT__, behind Caddy HTTPS).</description>
+  <executable>__INSTALL_DIR__\app\node\node.exe</executable>
+  <!-- release.env (version) first, then the settings file; migrations run at start (RUN_MIGRATIONS=1). -->
+  <arguments>--env-file="__INSTALL_DIR__\app\release.env" --env-file="__INSTALL_DIR__\.env" server.js</arguments>
+  <workingdirectory>__INSTALL_DIR__\app</workingdirectory>
+  <startmode>Automatic</startmode>
+  <depend>__PG_SERVICE__</depend>
+  <stoptimeout>20 sec</stoptimeout>
+  <onfailure action="restart" delay="10 sec" />
+  <onfailure action="restart" delay="30 sec" />
+  <onfailure action="restart" delay="60 sec" />
+  <resetfailure>1 hour</resetfailure>
+  <logpath>__INSTALL_DIR__\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+</service>
