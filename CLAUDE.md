@@ -23,6 +23,10 @@ Read `PROGRESS.md` first and continue from where it stops.
 10. **Product name only from `src/lib/brand.ts`.** Never hardcode the product name, short name or domain anywhere else in code (docs are fine).
 11. **Audit log holds ids only.** `audit_log.meta` may contain ids, roles and codes, never names, mobiles, emails or other personal data.
 12. **Ask first** before deleting files, rewriting git history, dropping databases, or adding any paid service or external API.
+13. **PERMANENT: manual entry by HR must always work.** HR can type every candidate field by hand. No intake step may
+    ever require a CV, a QR code, auto-fill, a webcam or the internet (the photo always has "Upload a photo file
+    instead"). Every pre-filled field stays editable before saving. Future helpers (QR self-fill, CV auto-fill) are
+    optional extras only. `e2e/manual-intake.spec.ts` guards this: it must keep passing.
 
 ## Where things are
 
