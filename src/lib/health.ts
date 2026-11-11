@@ -7,7 +7,7 @@ import { db } from "@/db";
 import { uploadRoot } from "@/lib/files";
 import pkg from "../../package.json";
 
-/** Backup scripts (deploy/backup.*) write the finish time here; default: UPLOAD_DIR/.last-backup */
+/** deploy/windows/backup.ps1 writes the finish time here; default: UPLOAD_DIR/.last-backup */
 export const backupStatusFile = () => process.env.BACKUP_STATUS_FILE || (uploadRoot() ? path.join(uploadRoot()!, ".last-backup") : null);
 
 export async function systemStatus() {
