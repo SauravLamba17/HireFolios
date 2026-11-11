@@ -114,10 +114,14 @@ export type CandidateRow = {
   id: string;
   full_name: string;
   mobile: string;
+  email: string | null;
   city: string | null;
   experience_months: number | null;
   expected_ctc: number | null;
   certifications: string[];
+  ehr_software: string[];
+  night_shift_ok: boolean | null;
+  voice_process: boolean | null;
   token: string | null;
   token_date: string | null;
   outcome: string | null;
@@ -128,9 +132,12 @@ export type CandidateRow = {
   total: number;
 };
 
-export async function searchCandidates(f: Filters, tenantId: string) {
+/** One page of the list, or (`all`) every match for an export, capped at EXPORT_MAX rows. */
+export const EXPORT_MAX = 10_000;
+export async function searchCandidates(f: Filters, tenantId: string, opts: { all?: boolean } = {}) {
   const rows = await db.execute<CandidateRow>(sql`
-    select c.id, c.full_name, c.mobile, c.city, c.experience_months, c.expected_ctc, c.certifications,
+    select c.id, c.full_name, c.mobile, c.email, c.city, c.experience_months, c.expected_ctc, c.certifications, c.ehr_software,
+           c.night_shift_ok, c.voice_process,
            la.token, la.token_date::text as token_date, la.outcome, j.title as job, s.name as stage,
            coalesce(lk.talent_pool and lk.withdrawn_at is null, false) as talent_pool,
            ph.id as photo_id, count(*) over ()::int as total
@@ -154,7 +161,7 @@ export async function searchCandidates(f: Filters, tenantId: string) {
     ) ph on true
     where ${candidateWhere(f, tenantId)}
     order by ${orderBy(f)}
-    limit ${PAGE_SIZE} offset ${(f.page - 1) * PAGE_SIZE}
+    limit ${opts.all ? EXPORT_MAX : PAGE_SIZE} offset ${opts.all ? 0 : (f.page - 1) * PAGE_SIZE}
   `);
   return { rows: [...rows], total: rows[0]?.total ?? 0 };
 }

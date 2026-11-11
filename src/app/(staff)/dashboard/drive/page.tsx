@@ -62,6 +62,11 @@ export default async function DrivePage() {
           <Link href="/tv" target="_blank" className="btn btn-secondary">
             Lobby TV screen ↗
           </Link>
+          {can(staff.role, "export") && (
+            <a href={`/api/exports/drive?date=${b.drive.driveDate}`} className="btn btn-secondary">
+              Export day (Excel)
+            </a>
+          )}
           {manage && <EndDay closed={Boolean(b.drive.closedAt)} />}
         </div>
       </div>

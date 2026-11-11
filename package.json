@@ -21,6 +21,8 @@
   "dependencies": {
     "better-auth": "^1.7.19",
     "drizzle-orm": "^0.45.4",
+    "exceljs": "^4.4.0",
+    "fflate": "^0.8.3",
     "next": "15.5.29",
     "postgres": "^4.1.0",
     "react": "19.1.0",
