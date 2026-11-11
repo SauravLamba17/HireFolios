@@ -1,0 +1,33 @@
+# Option B (default): Caddy's own certificate authority. Works without internet.
+# Each office PC trusts the root certificate once (trust-certificate.ps1).
+# install.ps1 fills in the __NAME__ values and writes C:\hirefolios\caddy\Caddyfile.
+{
+	admin off
+	storage file_system __CADDY_DATA__
+	skip_install_trust
+	log {
+		output file __LOG_DIR__/caddy.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
+
+__APP_DOMAIN__ {
+	tls internal
+	reverse_proxy 127.0.0.1:__APP_PORT__
+}
+
+# The root certificate, for trust-certificate.ps1 on the other PCs (it is public; the fingerprint is
+# compared with the one install.ps1 printed). Everything else on plain http goes to https.
+http://__APP_DOMAIN__ {
+	handle /hirefolios-root.crt {
+		root * __CADDY_DATA__/pki/authorities/local
+		rewrite * /root.crt
+		header Content-Type application/x-x509-ca-cert
+		file_server
+	}
+	handle {
+		redir https://{host}{uri} permanent
+	}
+}

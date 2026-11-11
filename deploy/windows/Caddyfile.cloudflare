@@ -1,0 +1,22 @@
+# Option A: a real Let's Encrypt certificate, proved through Cloudflare DNS (needs the Cloudflare
+# DNS build of Caddy and CLOUDFLARE_API_TOKEN in C:\hirefolios\.env). Nothing to install on the other
+# PCs. The server PC needs the internet about once every two months to renew.
+# install.ps1 fills in the __NAME__ values and writes C:\hirefolios\caddy\Caddyfile.
+{
+	admin off
+	storage file_system __CADDY_DATA__
+	log {
+		output file __LOG_DIR__/caddy.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
+
+__APP_DOMAIN__ {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+		resolvers 1.1.1.1
+	}
+	reverse_proxy 127.0.0.1:__APP_PORT__
+}
