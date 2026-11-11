@@ -1,6 +1,6 @@
 # Progress
 
-Phases 3–6 are a proposed outline; adjust before starting each one.
+Phase 3 is done except the Docker tests (Docker is not installed on the dev PC yet). Phase 4 is listed at the end.
 
 ## Phase 0 — Setup + login ✅ (2026-11-10)
 
@@ -99,24 +99,82 @@ Phases 3–6 are a proposed outline; adjust before starting each one.
 - Wait estimates and the "minutes waiting" timer are approximate by design (position × average ÷ panels).
 - "End of day" sends anyone still in a room back to waiting; they stay in progress until HR marks them.
 
-## Phase 3 — Offers and joining
+## Phase 3 — PC intake, offers, exports, reports, privacy, production files (in progress: Docker tests pending)
 
-- [ ] Offer letters, joined / not joined tracking after Selected
-- [ ] Reports from scorecards (pass rates by round, reasons)
+- [x] **PC-based intake** (no tablets): keyboard-first wizard (Enter = Next, Esc = back with confirm, focus moves to the
+      next field), wider desk layout (1366x768 and up), "turn the screen to the candidate" consent wording (English/Hindi)
+- [x] Webcam: picker when there are several (remembered per PC), clear messages for blocked / no webcam / unplugged /
+      failed with "Try again", upload fallback, frame guard (no blank photos), A4 outline for paper CVs
+- [x] CV step: drag-and-drop or choose up to 5 files (PDF, Word .docx, JPEG/PNG/WebP, 8 MB each) plus webcam pages;
+      `.docx` checked by its bytes (ZIP + `word/document.xml`), served as a download
+- [x] Migration `0004_offers_privacy` (adds only): `offer_status`, offered CTC, joining date, joined on;
+      outcomes `offer_declined` and `joined`; rights-request kind `grievance`, due date, requester, resolution
+- [x] Offer / joined on the profile (admin, HR, manager): offered → accepted / declined; declined gets purge dates;
+      joined only from Selected (not after a declined offer), never in the future; rules in `flow.ts`, unit-tested
+- [x] Exports (admin, HR): candidate list with the current filters (Excel or CSV, formula-safe), drive day (summary +
+      candidates), joined; each logged in `exports` + audit (kind and row count only)
+- [x] `/dashboard/reports` (admin, HR, manager): walk-ins per day, funnel, pass rates by round, sources, selection by
+      position, reject reasons, interviewer load, offer / joining figures; all from real rows with "data as of"
+- [x] Retention settings (admin): cooling-off, photo and data periods with limits, optional recalculation of existing
+      dates, "due in the next 7 days" preview, last deletion run
+- [x] Deletion job (in the server, every 30 minutes): removes photos past their date and candidates whose every visit is
+      past its date; never joined, talent-pool or recently-visited candidates; re-checks each candidate in its own
+      transaction; files removed after commit; one audit row per run (counts only); dry run (`planPurge`) tested first
+- [x] `/dashboard/privacy` (admin, HR): log access / correction / erasure / withdrawal / grievance requests by mobile,
+      90-day due date, overdue highlighted; access ZIP (data.json + files), correction (intake rules), erasure (typed
+      ERASE, refused for joined employees)
+- [x] `/dashboard/audit` (admin): filters by action, staff, date; CSV export
+- [x] Lobby TV (`display`) sessions last 30 days, staff 12 hours; admin "Sign out everywhere" per user
+- [x] `/api/health` (no auth, no personal data: DB, free disk, last backup, version) and the admin "Server status" card
+- [x] Start-up (`src/instrumentation.ts`): migrations and seed when `RUN_MIGRATIONS=1` / `SEED_ON_START=1` (set in the image)
+- [x] Written, **not yet run**: `Dockerfile` (multi-stage, standalone, non-root, migrates on start, healthcheck),
+      `docker-compose.yml` (db + app + Caddy, `restart: unless-stopped`, uploads bind-mounted), `.env.production.example`,
+      `deploy/Caddyfile.cloudflare` (option A, Let's Encrypt via Cloudflare DNS) and `deploy/Caddyfile.internal` (option B,
+      `tls internal` + certutil steps), `deploy/backup.ps1|sh` (pg_dump + uploads archive, keep N days, offsite copy,
+      writes the last-backup time), `deploy/restore.ps1|sh` (typed RESTORE, safety backup first, one transaction),
+      Task Scheduler line (6:15 pm Mon–Sat), `docs/INSTALL.md`, `docs/FIRST-DRIVE-CHECKLIST.md`
+- [x] Verified (without Docker): see "Verification" below
+- [ ] **Docker tests (after Docker Desktop is installed):** image build, `up -d` on a fresh volume (migrate + seed on
+      start, health "ok"), HTTPS with option B (and option A if the Cloudflare token is available), webcam over HTTPS
+      from another PC, backup → restore round trip, fresh install from `docs/INSTALL.md`, then the Phase 3 final report
 
-## Phase 4 — Candidate records
+### Verification (Phase 3, without Docker)
 
-- [ ] Edit a candidate's details outside intake (keeps `search_text` in sync)
-- [ ] Merge possible duplicates flagged at intake
+- `tsc`, `eslint` clean; `vitest` 127 tests (8 files: flow, retention, reports, exports, files, intake, session, …); production build OK
+- Playwright 21/21 with two fake webcams: drive day (4), PC intake (7, incl. keyboard-only registration, webcam
+  picker, Word + PDF + webcam CV, plain-http LAN address 192.168.1.7 with uploads), Phase 3 (7: offer → joined,
+  filtered Excel / joined CSV, reports figures, retention re-calculation, access ZIP + erase, audit viewer, 30-day TV
+  session), staff (3); screenshots at 1440, 1366x768, 1024 (TV 1920x1080) reviewed
+- `npm run smoke` 85/85 on localhost, on the LAN address, and on a fresh empty database started the way the Docker image
+  starts (`RUN_MIGRATIONS=1`, `SEED_ON_START=1`); includes the deletion job (dry run, real run, re-run) in a throwaway tenant
+- QA script 41/41: multi-file / fake `.docx` / 6 files / Excel-as-CV, every role × new pages and APIs, signed out,
+  another tenant's ids (offer, correction, erase, update, ZIP → 404), offer rules, privacy edge cases, retention limits,
+  end-of-day Excel, health + status card, no webcam, blocked webcam, webcam unplugged mid-capture + Try again, CV limits
+- A failed start-up (e.g. migrations) now exits with code 1 instead of serving errors (checked)
+- Fixed during testing (logged before fixing): report dates like 30 Feb accepted; "Find" again skipped the lookup;
+  CV limit message missing; "No webcam found" while the previous step released the webcam; failed start-up kept serving
+  500s; privacy status select not following "Erase now"; "talent pool" label on joined employees; "1 entries";
+  install guide wording; smoke test now waits out the sign-in limit when another test run used it
 
-## Phase 5 — Privacy, retention and reports
+### Known issues / left open after Phase 3
 
-- [ ] Data subject requests (access, correction, erasure, consent withdrawal)
-- [ ] Retention purge: photos after `photo_retention_days`, data after `data_retention_days`
-- [ ] CSV exports, daily reports, audit log view
+- **Docker parts are untested** until Docker is installed (see the open item above). The PowerShell / shell scripts
+  were only syntax-checked.
+- **To confirm with Simplen:** retention periods (defaults: 90-day cooling-off, photos 180 days, data 365 days), who
+  answers rights requests. The privacy notice does not yet name a contact for requests and complaints; add one
+  (and bump `NOTICE_VERSION`) once Simplen decides.
+- The deletion job runs inside the app server; if the server is off for days, it catches up on the next start.
+- Erasure keeps the audit trail (ids only). Excel / CSV files already downloaded are outside the system and must be
+  deleted by hand.
+- Old `.doc` (Word 97–2003) files are refused; save them as `.docx` or PDF first.
+- A Word CV is downloaded, not shown in the browser (no viewer runs offline).
+- Still open from earlier phases: `npm audit` findings in build tools (fix needs Next 16), staff emails unique across
+  tenants, in-memory sign-in rate limit, staff can rename themselves via `update-user`, in-process live-update bus.
 
-## Phase 6 — Production on the office PC, SaaS readiness
+## Phase 4 — next
 
-- [ ] Production Docker compose (app + Postgres), backups and restore, update procedure
-- [ ] LAN setup guide (fixed IP or hostname for tablets) and HTTPS on the LAN (needed for the live camera)
-- [ ] Tenant onboarding and settings for other companies
+- [ ] One-time QR link so a candidate can upload their CV from their own phone (through a Cloudflare Tunnel)
+- [ ] CV auto-fill (read details from the uploaded CV, offline, no paid APIs)
+- [ ] Intake order Mobile → CV → Details (so auto-fill can prefill the details)
+- [ ] Flag photos that were uploaded rather than taken live ("uploaded, not live")
+- Later: tenant onboarding and settings for other companies (SaaS), merge possible duplicates
