@@ -8,7 +8,7 @@ import { IntakeWizard } from "./intake-wizard";
 
 export const metadata: Metadata = { title: "New candidate" };
 
-// Tablet intake: Mobile → Details → Consent → CV → Photo → Save → Token.
+// PC intake (webcam): Mobile → Details → Consent → CV → Photo → Save → Token.
 export default async function IntakePage() {
   const staff = await requireStaff("intake");
   if (!uploadRoot()) {

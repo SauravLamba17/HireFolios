@@ -1,7 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { db, isUuid } from "@/db";
 import { candidateFiles } from "@/db/schema";
-import { extensionOf, readFileUnder, uploadRoot } from "@/lib/files";
+import { DOCX, extensionOf, readFileUnder, uploadRoot } from "@/lib/files";
 import { canViewCandidate } from "@/lib/access";
 import { requireStaffApi } from "@/lib/session";
 
@@ -28,7 +28,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     headers: {
       "content-type": f.type,
       "content-length": String(data.byteLength),
-      "content-disposition": `inline; filename="${f.kind}-${id}.${extensionOf(f.type)}"`,
+      // Word files are always downloaded, never shown in the browser.
+      "content-disposition": `${f.type === DOCX ? "attachment" : "inline"}; filename="${f.kind}-${id}.${extensionOf(f.type)}"`,
       "x-content-type-options": "nosniff",
       "cache-control": "private, max-age=3600",
       vary: "Cookie",

@@ -175,7 +175,7 @@ export default async function InterviewPage() {
             {latestPages.length === 0 && !upload && <p className="text-sm text-slate-600">No CV saved.</p>}
             {upload && (
               <a href={`/api/files/${upload.id}`} target="_blank" rel="noreferrer" className="btn btn-secondary">
-                Open uploaded CV ({upload.mime === "application/pdf" ? "PDF" : "image"}) ↗
+                Open uploaded CV ({upload.mime === "application/pdf" ? "PDF" : upload.mime.includes("wordprocessingml") ? "Word, downloads" : "image"}) ↗
               </a>
             )}
             {latestPages.map((p) => (

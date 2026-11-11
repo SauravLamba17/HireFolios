@@ -1,4 +1,4 @@
-// Intake rules shared by the tablet (client) and POST /api/intake (server). No server imports here.
+// Intake rules shared by the intake wizard (browser) and POST /api/intake (server). No server imports here.
 import { z } from "zod";
 import { todayIST } from "@/lib/ist";
 import { NOTICE_VERSION } from "@/lib/notice";
@@ -6,7 +6,18 @@ import { CERTIFICATIONS, CODING_SPECIALTIES, EDUCATION, EHR_SOFTWARE, LANGUAGES,
 
 export const MIN_AGE = 18;
 export const MAX_CV_PAGES = 10;
-export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // uploaded CV file
+export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // each uploaded CV file
+export const MAX_CV_FILES = 5;
+export const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+/** What kind of CV file HR picked (by type or, if the browser gives none, by extension). The server re-checks the bytes. */
+export function cvFileKind(f: { name: string; type: string }): "pdf" | "docx" | "image" | null {
+  const ext = f.name.toLowerCase().split(".").pop() ?? "";
+  if (f.type === "application/pdf" || (!f.type && ext === "pdf")) return "pdf";
+  if (f.type === DOCX_MIME || ((!f.type || f.type === "application/octet-stream") && ext === "docx")) return "docx";
+  if (/^image\/(jpeg|png|webp)$/.test(f.type) || (!f.type && ["jpg", "jpeg", "png", "webp"].includes(ext))) return "image";
+  return null;
+}
 export const MAX_PAGE_BYTES = 4 * 1024 * 1024; // one photographed CV page (~1800px JPEG)
 export const MAX_PHOTO_BYTES = 2 * 1024 * 1024; // live photo (~800px JPEG)
 

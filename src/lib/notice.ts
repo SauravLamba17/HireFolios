@@ -1,8 +1,8 @@
-// Privacy notice the candidate reads and accepts on the tablet before any photo is taken.
+// Privacy notice the candidate reads and accepts on the intake PC screen before any photo is taken.
 //
 // DRAFT — TO BE CHECKED BY LEGAL (DPDP Act 2023) before real use. The Hindi text also needs a
 // native-speaker check. Any wording change must bump NOTICE_VERSION: each consent row stores the
-// version the candidate saw, and the tablet refuses to save against an outdated version.
+// version the candidate saw, and the intake refuses to save against an outdated version.
 export const NOTICE_VERSION = "draft-2026-11-10";
 
 export type NoticeLanguage = "en" | "hi";

@@ -172,7 +172,7 @@ export function DetailsForm({
         {jobs.length === 0 ? (
           <p className="alert-error">No open positions. An admin can open one in Settings.</p>
         ) : (
-          <div role="radiogroup" aria-label="Position" className="grid gap-2 sm:grid-cols-2">
+          <div role="radiogroup" aria-label="Position" className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {jobs.map((j) => (
               <button
                 key={j.id}
@@ -192,6 +192,8 @@ export function DetailsForm({
         {errors.jobId && <p className="text-sm font-medium text-red-700">{errors.jobId}</p>}
       </section>
 
+      {/* Two columns on wide screens: the candidate on the left, RCM + HR notes on the right. */}
+      <div className="grid gap-8 xl:grid-cols-2">
       <section aria-labelledby="per-h" className="space-y-4">
         <h2 id="per-h" className="text-lg font-semibold">Candidate</h2>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -258,6 +260,7 @@ export function DetailsForm({
         </div>
       </section>
 
+      <div className="space-y-8">
       <section aria-labelledby="rcm-h" className="space-y-4">
         <h2 id="rcm-h" className="text-lg font-semibold">Medical billing / RCM</h2>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -294,6 +297,8 @@ export function DetailsForm({
           <textarea {...input("hrNotes")} rows={3} maxLength={1000} className="input h-auto py-2" />
         </Field>
       </section>
+      </div>
+      </div>
     </div>
   );
 }

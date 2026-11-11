@@ -4,8 +4,9 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-export type FileType = "image/jpeg" | "image/png" | "image/webp" | "application/pdf";
-const EXT: Record<FileType, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/pdf": "pdf" };
+export const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+export type FileType = "image/jpeg" | "image/png" | "image/webp" | "application/pdf" | typeof DOCX;
+const EXT: Record<FileType, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/pdf": "pdf", [DOCX]: "docx" };
 
 /**
  * Absolute folder for uploads, or null when UPLOAD_DIR is unset or relative.
@@ -24,6 +25,12 @@ export function sniffType(b: Uint8Array): FileType | null {
   if (b[0] === 0x89 && ascii(1, 4) === "PNG") return "image/png";
   if (ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") return "image/webp";
   if (ascii(0, 5) === "%PDF-") return "application/pdf";
+  // Word .docx is a ZIP whose entries include word/document.xml and [Content_Types].xml (names are stored as
+  // plain text). Other ZIPs (.xlsx, .pptx, plain archives) are refused. Stored as-is and only ever downloaded (never shown inline, opened or run).
+  if (b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04) {
+    const text = Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString("latin1");
+    if (text.includes("word/document.xml") && text.includes("[Content_Types].xml")) return DOCX;
+  }
   return null;
 }
 

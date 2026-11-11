@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import { expect, test, type Browser, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Locator, type Page } from "@playwright/test";
+import { strToU8, zipSync } from "fflate";
 import postgres from "postgres";
 import { shoot, signIn } from "./helpers";
 
-// Runs against the seeded tenant with a fake camera (see playwright.config.ts).
+// Runs against the seeded tenant with two fake webcams (see playwright.config.ts).
 // Everything it creates (staff, candidates, files, a job) is deleted afterwards.
 const TEST_DOMAIN = "e2e.example.test";
 const admin = { email: process.env.SEED_ADMIN_EMAIL!, password: process.env.SEED_ADMIN_PASSWORD! };
@@ -16,7 +17,7 @@ const mobile = `7${rnd9()}`;
 const lanMobile = `8${rnd9()}`;
 const candidateName = `E2E Candidate ${run}`;
 const jobTitle = `E2E Test Job ${run}`;
-const TABLET = { width: 800, height: 1280 };
+const DESK = { width: 1366, height: 768 }; // HR desk PC
 
 const sql = postgres(process.env.DATABASE_URL!);
 let adminPage: Page;
@@ -26,13 +27,13 @@ test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async ({ browser }) => {
   adminPage = await (await browser.newContext()).newPage();
-  hrPage = await (await browser.newContext({ viewport: TABLET })).newPage();
+  hrPage = await (await browser.newContext({ viewport: DESK, locale: "en-IN" })).newPage(); // dates typed dd-mm-yyyy
 });
 
 // The default failure snapshot shows the wrong tab here, so attach both.
 test.afterEach(async ({}, info) => {
   if (info.status === info.expectedStatus) return;
-  for (const [name, p] of [["tablet", hrPage], ["admin", adminPage]] as const) {
+  for (const [name, p] of [["hr-desk", hrPage], ["admin", adminPage]] as const) {
     const shot = await p.screenshot({ fullPage: true }).catch(() => null);
     if (shot) await info.attach(`${name}.png`, { body: shot, contentType: "image/png" });
   }
@@ -106,21 +107,21 @@ test("admin password reset signs the user out and forces a change again", async 
   expect(audit.map((a) => a.action)).toEqual(["user.create", "user.password_change", "user.password_reset", "user.password_change"]);
 });
 
-// One browser runs both the admin PC and the tablet; only the front tab paints camera video.
+// One browser runs both the admin PC and the HR desk; only the front tab paints webcam video.
 const use = async (page: Page) => {
   await page.bringToFront();
   return page;
 };
 
 /**
- * Tap a capture button like HR would. If the app says the picture came out blank, tap again. If the
- * camera won't start, press "Try the camera again"; if it still won't, use the camera-app button the
- * app offers. (Headless Chrome's fake camera sometimes refuses to open at all: InvalidStateError /
+ * Capture like HR would (keyboard: focus the button, Enter). If the app says the picture came out blank,
+ * press again. If the webcam won't start, press "Try again"; if it still won't, upload a photo file as
+ * the app offers. (Headless Chrome's fake camera sometimes refuses to open at all: InvalidStateError /
  * NotFoundError, about 1 run in 10 on the dev PC, with no app code involved.)
  */
 async function capture(page: Page, button: string) {
   const ready = page.getByRole("button", { name: button, exact: true, disabled: false });
-  const restart = page.getByRole("button", { name: "Try the camera again" });
+  const restart = page.getByRole("button", { name: "Try again" });
   let restarts = 0;
   for (let tries = 1; tries <= 10; tries++) {
     await expect(ready.or(restart)).toBeVisible({ timeout: 15_000 });
@@ -129,15 +130,16 @@ async function capture(page: Page, button: string) {
         await restart.click();
         continue;
       }
-      console.log(`${button}: fake camera would not start in this browser; used the camera-app fallback`);
+      console.log(`${button}: fake webcam would not start in this browser; used the upload fallback`);
       const jpeg = await page.screenshot({ type: "jpeg" });
-      await page.locator("input[type=file][capture]").setInputFiles({ name: "shot.jpg", mimeType: "image/jpeg", buffer: jpeg });
+      await page.getByTestId("camera-upload").first().setInputFiles({ name: "shot.jpg", mimeType: "image/jpeg", buffer: jpeg });
       return;
     }
     // The camera can change state between the check and the tap; look again rather than wait forever.
-    if (!(await ready.click({ timeout: 5_000 }).then(() => true, () => false))) continue;
+    if (!(await ready.focus({ timeout: 5_000 }).then(() => true, () => false))) continue;
+    await page.keyboard.press("Enter");
     await expect(page.getByRole("button", { name: "Processing…" })).toHaveCount(0, { timeout: 10_000 });
-    if (!(await page.getByText(/The picture came out blank|The camera was restarted/).isVisible())) {
+    if (!(await page.getByText(/The picture came out blank|The webcam was restarted/).isVisible())) {
       if (tries > 1) console.log(`${button}: accepted on try ${tries} (camera not ready or blank frame before)`);
       return;
     }
@@ -170,72 +172,143 @@ async function fillDetails(page: Page) {
   await page.getByLabel("Skills (optional)").fill("ICD-10, CPT, denial follow-up");
 }
 
-test("full intake on the tablet: CV pages + photo → token", async () => {
+/** Press Tab until `target` has the keyboard focus (keyboard-only walk through the form). */
+async function tabTo(page: Page, target: Locator, max = 120) {
+  for (let i = 0; i < max; i++) {
+    if (await target.evaluate((el) => el === document.activeElement).catch(() => false)) return;
+    await page.keyboard.press("Tab");
+  }
+  throw new Error(`Tab never reached ${target}`);
+}
+const typeInto = async (page: Page, target: Locator, text: string) => {
+  await tabTo(page, target);
+  await page.keyboard.type(text);
+};
+const pressOn = async (page: Page, target: Locator, key = "Enter") => {
+  await tabTo(page, target);
+  await page.keyboard.press(key);
+};
+
+// A tiny real PDF and Word file, as HR would get them by email / WhatsApp.
+const pdfCv = { name: "cv.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n") };
+const docxCv = {
+  name: "cv.docx",
+  mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  buffer: Buffer.from(zipSync({ "[Content_Types].xml": strToU8("<Types/>"), "word/document.xml": strToU8("<w:document>CV</w:document>") })),
+};
+
+test("full PC intake with the keyboard: CV files + a webcam page + photo → token", async () => {
   const page = await use(hrPage);
   await page.goto("/intake");
-  await page.getByRole("textbox", { name: "Mobile number" }).fill(`+91 ${mobile.slice(0, 5)} ${mobile.slice(5)}`);
-  await shoot(page, "intake-1-mobile", TABLET);
-  await page.getByRole("button", { name: "Find" }).click();
+  const mobileBox = page.getByRole("textbox", { name: "Mobile number" });
+  await expect(mobileBox).toBeFocused(); // autofocus
+  await page.keyboard.type(`+91 ${mobile.slice(0, 5)} ${mobile.slice(5)}`);
+  await shoot(page, "intake-1-mobile", DESK);
+  await page.keyboard.press("Enter"); // Find
   await expect(page.getByRole("status")).toContainText("New candidate");
-  await page.getByRole("button", { name: /Next: details/ }).click();
+  await expect(page.getByRole("button", { name: "Next: details →" })).toBeFocused(); // after a lookup the keyboard is on Next
+  await page.keyboard.press("Enter");
 
-  // Wrong inputs first: the form says what to fix.
-  await page.getByRole("button", { name: /Next: consent/ }).click();
+  // Details, keyboard only: Enter on a field = Next; wrong inputs are reported first.
+  await expect(page.getByRole("radio", { name: "Medical Coder", exact: true })).toBeVisible();
+  await typeInto(page, page.getByLabel("Full name"), candidateName);
+  await page.keyboard.press("Enter");
   await expect(page.getByText("Fix the fields marked in red.")).toBeVisible();
   await expect(page.getByText("Choose a position")).toBeVisible();
-  await page.getByLabel("Date of birth").fill(`${new Date().getFullYear() - 16}-01-01`);
-  await page.getByRole("button", { name: /Next: consent/ }).click();
-  await expect(page.getByText("Candidate must be at least 18 years old")).toBeVisible();
+  await page.keyboard.press("Escape"); // Esc = back (asks first): say no
+  await expect(page.getByLabel("Full name")).toHaveValue(candidateName);
 
-  await fillDetails(page);
+  await pressOn(page, page.getByRole("radio", { name: "Medical Coder", exact: true }));
+  await typeInto(page, page.getByLabel("Date of birth"), "20051999"); // dd-mm-yyyy
+  await typeInto(page, page.getByLabel("Email (optional)"), `cand-${run}@${TEST_DOMAIN}`);
+  await typeInto(page, page.getByLabel("City"), "Chandigarh");
+  await typeInto(page, page.getByLabel("Education"), "B.Ph");
+  await typeInto(page, page.getByLabel("Experience years"), "1");
+  await typeInto(page, page.getByLabel("Experience months"), "6");
+  await typeInto(page, page.getByLabel("Notice period"), "15");
+  await typeInto(page, page.getByLabel("Current CTC (LPA, optional)"), "2.2");
+  await typeInto(page, page.getByLabel("Expected CTC (LPA, optional)"), "3.1");
+  await typeInto(page, page.getByLabel("How did they hear about us?"), "Emp");
+  await pressOn(page, page.getByRole("group", { name: "Languages spoken" }).getByRole("button", { name: "English" }), "Space");
+  await pressOn(page, page.getByRole("group", { name: "Languages spoken" }).getByRole("button", { name: "Punjabi" }), "Space");
+  await pressOn(page, page.getByRole("radiogroup", { name: "OK with night / US shift?" }).getByRole("radio", { name: "Yes" }), "Space");
+  await pressOn(page, page.getByRole("radiogroup", { name: "OK with voice process (calls)?" }).getByRole("radio", { name: "No" }), "Space");
+  await pressOn(page, page.getByRole("group", { name: "Certifications" }).getByRole("button", { name: "CPC", exact: true }), "Space");
+  await pressOn(page, page.getByRole("group", { name: "Coding specialties" }).getByRole("button", { name: "E/M" }), "Space");
+  await pressOn(page, page.getByRole("group", { name: "EHR / PM software" }).getByRole("button", { name: "Epic" }), "Space");
+  await typeInto(page, page.getByLabel("Typing speed (WPM, optional)"), "38");
   await expect(page.locator("p.text-red-700")).toHaveCount(0); // each message cleared as its field was fixed
-  await shoot(page, "intake-2-details", TABLET);
-  await page.getByRole("button", { name: /Next: consent/ }).click();
+  await expect(page.getByLabel("Education")).toHaveValue("B.Pharm");
+  await expect(page.getByLabel("Notice period")).toHaveValue("15");
+  await shoot(page, "intake-2-details", DESK);
+  await page.keyboard.press("Enter"); // focus is in "Typing speed": Enter = Next
 
-  await expect(page.getByRole("heading", { name: "Please hand the tablet to the candidate" })).toBeVisible();
-  await shoot(page, "intake-3a-handover", TABLET);
-  await page.getByRole("button", { name: "The candidate has the tablet" }).click();
+  await expect(page.getByRole("heading", { name: "Please turn the screen towards the candidate" })).toBeVisible();
+  await shoot(page, "intake-3a-handover", DESK);
+  await page.keyboard.press("Enter"); // the button has the focus
   await expect(page.getByRole("heading", { name: "How your information is used" })).toBeVisible();
   await expect(page.getByRole("button", { name: "I agree, continue" })).toBeDisabled();
-  await page.getByRole("button", { name: "हिन्दी" }).click();
+  await page.keyboard.press("Space"); // the required box has the focus
+  await pressOn(page, page.getByRole("button", { name: "हिन्दी" }));
   await expect(page.getByRole("heading", { name: "आपकी जानकारी का उपयोग कैसे होगा" })).toBeVisible();
-  await page.getByRole("checkbox", { name: /मैंने यह सूचना पढ़ ली है/ }).check();
-  await page.getByRole("checkbox", { name: /टैलेंट पूल/ }).check();
-  await shoot(page, "intake-3b-consent-hindi", TABLET);
-  await page.getByRole("button", { name: "सहमत हूँ, आगे बढ़ें" }).click();
-  await page.getByRole("button", { name: "HR: continue to CV" }).click();
+  await pressOn(page, page.getByRole("checkbox", { name: /टैलेंट पूल/ }), "Space");
+  await shoot(page, "intake-3b-consent-hindi", DESK);
+  await pressOn(page, page.getByRole("button", { name: "सहमत हूँ, आगे बढ़ें" }));
+  await expect(page.getByRole("heading", { name: "धन्यवाद! कृपया स्क्रीन वापस HR की ओर घुमा दें।" })).toBeVisible();
+  await page.keyboard.press("Enter"); // "HR: continue to CV" has the focus
 
+  // CV: two files as HR would get them (the file dialog itself can't be keyboard-driven in a test) + one webcam page.
+  await expect(page.getByRole("button", { name: "Skip CV →" })).toBeFocused();
+  await page.getByTestId("cv-files").setInputFiles([pdfCv, docxCv]);
+  await expect(page.getByRole("list", { name: "CV files to save" }).getByRole("listitem")).toHaveCount(2);
+  await page.getByTestId("cv-files").setInputFiles([{ name: "cv.doc", mimeType: "application/msword", buffer: Buffer.from("x") }]);
+  await expect(page.getByRole("alert").filter({ hasText: "cv.doc: use PDF, Word (.docx)" })).toBeVisible();
+  await pressOn(page, page.getByRole("button", { name: /Photograph a paper CV with the webcam/ }));
   await capture(page, "Capture page 1");
-  await capture(page, "Capture page 2");
-  await expect(page.getByRole("list", { name: "Captured pages" }).getByRole("listitem")).toHaveCount(2);
-  await shoot(page, "intake-4-cv", TABLET);
-  await page.getByRole("button", { name: /Next: photo/ }).click();
+  await expect(page.getByRole("list", { name: "Captured pages" }).getByRole("listitem")).toHaveCount(1);
+  await shoot(page, "intake-4-cv", DESK);
+  await pressOn(page, page.getByRole("button", { name: "Next: photo →" }));
 
+  // Photo: two webcams plugged in → pick the second one; the choice is remembered on this PC.
+  const picker = page.getByLabel("Webcam", { exact: true });
+  await expect(picker).toBeVisible();
+  const second = await picker.locator("option").nth(2).getAttribute("value");
+  await picker.selectOption(second!);
+  expect(await page.evaluate(() => localStorage.getItem("hf-webcam"))).toBe(second);
   await capture(page, "Take photo");
   await expect(page.getByRole("img", { name: "Candidate photo" })).toBeVisible();
-  await page.getByRole("button", { name: "Retake photo" }).click();
-  await capture(page, "Take photo");
-  await shoot(page, "intake-5-photo", TABLET);
-  await page.getByRole("button", { name: /Next: save/ }).click();
+  await expect(page.getByRole("button", { name: "Next: save →" })).toBeFocused();
+  await shoot(page, "intake-5-photo", DESK);
+  await page.keyboard.press("Enter");
 
-  await expect(page.getByText("2 page photos")).toBeVisible();
+  await expect(page.getByText("cv.pdf, cv.docx · 1 webcam page")).toBeVisible();
   await expect(page.getByText(/Agreed \(हिन्दी\) · talent pool/)).toBeVisible();
-  await shoot(page, "intake-6-save", TABLET);
-  await page.getByRole("button", { name: "Save and get token" }).dblclick(); // double tap must not register twice
+  await shoot(page, "intake-6-save", DESK);
+  await expect(page.getByRole("button", { name: "Save and get token" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter"); // a second press must not register twice
   await expect(page.getByTestId("token")).toHaveText(/^A-\d{3}$/);
   await expect(page.getByText(candidateName)).toBeVisible();
-  await shoot(page, "intake-7-token", TABLET);
+  await shoot(page, "intake-7-token", DESK);
 
   const [app] = await sql`select a.id, a.token, (select count(*)::int from applications x where x.client_request_id = a.client_request_id) as n
     from applications a join candidates c on c.id = a.candidate_id where c.mobile = ${mobile}`;
   expect(app.n).toBe(1);
-  const files = await sql`select kind, page_no, size_bytes, mime_type from candidate_files where application_id = ${app.id} order by kind, page_no`;
-  expect(files.map((f) => `${f.kind}:${f.page_no ?? "-"}`)).toEqual(["photo:-", "cv_page:1", "cv_page:2"]); // enum order
-  for (const f of files) expect(`${f.kind} ${f.mime_type} ${f.size_bytes > 1000 ? "has content" : `${f.size_bytes} bytes`}`).toBe(`${f.kind} image/jpeg has content`);
+  const files = await sql`select kind, page_no, mime_type from candidate_files where application_id = ${app.id} order by kind, mime_type`;
+  expect(files.map((f) => `${f.kind}:${f.mime_type}`)).toEqual([
+    "photo:image/jpeg",
+    "cv_page:image/jpeg",
+    "cv_upload:application/pdf",
+    "cv_upload:application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ]);
   const [consent] = await sql`select language, talent_pool, whatsapp from consents where application_id = ${app.id}`;
   expect(consent).toEqual({ language: "hi", talent_pool: true, whatsapp: false });
-  const [c] = await sql`select current_ctc, expected_ctc, experience_months, certifications, ehr_software, night_shift_ok, voice_process, typing_wpm, languages from candidates where mobile = ${mobile}`;
-  expect(c).toMatchObject({ current_ctc: 220000, expected_ctc: 310000, experience_months: 18, certifications: ["CPC"], ehr_software: ["Epic"], night_shift_ok: true, voice_process: false, typing_wpm: 38, languages: ["English", "Punjabi"] });
+  const [c] = await sql`select date_of_birth::text as dob, qualification, notice_days, current_ctc, expected_ctc, experience_months, certifications, ehr_software, night_shift_ok, voice_process, typing_wpm, languages from candidates where mobile = ${mobile}`;
+  expect(c).toMatchObject({ dob: "1999-05-20", qualification: "B.Pharm", notice_days: 15, current_ctc: 220000, expected_ctc: 310000, experience_months: 18, certifications: ["CPC"], ehr_software: ["Epic"], night_shift_ok: true, voice_process: false, typing_wpm: 38, languages: ["English", "Punjabi"] });
+  // The Word CV is offered as a download, never shown inline.
+  const [docRow] = await sql`select id from candidate_files where application_id = ${app.id} and mime_type like '%wordprocessingml%'`;
+  const res = await page.request.get(`/api/files/${docRow.id}`);
+  expect(res.headers()["content-disposition"]).toMatch(/^attachment;/);
 });
 
 test("returning candidate is found and prefilled", async () => {
@@ -248,7 +321,7 @@ test("returning candidate is found and prefilled", async () => {
   await expect(page.getByRole("img", { name: "Last photo" })).toBeVisible();
   await expect(page.getByText(/Already registered today: token A-\d{3}/)).toBeVisible();
   await expect(page.getByRole("table")).toContainText("Medical Coder");
-  await shoot(page, "intake-1b-returning", TABLET);
+  await shoot(page, "intake-1b-returning", DESK);
   await page.getByRole("button", { name: /Continue with this candidate/ }).click();
 
   await expect(page.getByLabel("Full name")).toHaveValue(candidateName);
@@ -269,12 +342,12 @@ test("cooldown banner shows for HR, never on the candidate's consent screen", as
   const banner = page.getByRole("alert").filter({ hasText: "Cooldown" });
   await expect(banner).toBeVisible();
   await expect(banner).toContainText("Typing speed below requirement");
-  await shoot(page, "intake-1c-cooldown", TABLET);
+  await shoot(page, "intake-1c-cooldown", DESK);
 
   await page.getByRole("button", { name: /Continue with this candidate/ }).click();
   await page.getByLabel("How did they hear about us?").selectOption("Walk-in (saw the board / heard nearby)");
   await page.getByRole("button", { name: /Next: consent/ }).click();
-  await page.getByRole("button", { name: "The candidate has the tablet" }).click();
+  await page.getByRole("button", { name: "The candidate can see the screen" }).click();
   await expect(page.getByRole("heading", { name: "How your information is used" })).toBeVisible();
   await expect(page.getByText("Cooldown")).toHaveCount(0);
   await expect(page.getByText("Typing speed below requirement")).toHaveCount(0);
@@ -302,7 +375,9 @@ test("admin: candidate list, profile and settings", async () => {
   await page.goto(`/dashboard?q=${encodeURIComponent(candidateName)}`);
   await page.getByRole("link", { name: candidateName }).click();
   await expect(page.getByRole("heading", { name: candidateName })).toBeVisible();
-  await expect(page.getByText("Page 2")).toBeVisible();
+  await expect(page.getByText("Page 1", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open uploaded CV (PDF)" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open uploaded CV (Word, downloads)" })).toBeVisible();
   await expect(page.getByText("draft-")).toBeVisible();
   await expect(page.getByText("3.1 LPA")).toBeVisible();
   await shoot(page, "profile");
@@ -345,12 +420,12 @@ test("admin: candidate list, profile and settings", async () => {
   await expect(page.getByRole("status")).toContainText(`Location renamed to ${original}.`);
 });
 
-// Plain-http LAN address (how tablets reach the office PC): the browser blocks the live camera,
-// so the camera-app fallback must work end to end. Set E2E_LAN_URL, e.g. http://192.168.1.20:3000.
-test("intake over the LAN address uses the camera-app fallback", async ({ browser }: { browser: Browser }) => {
+// Plain-http LAN address (how other PCs reach the server PC without HTTPS): the browser blocks the live camera,
+// so the photo-upload fallback must work end to end. Set E2E_LAN_URL, e.g. http://192.168.1.20:3000.
+test("intake over a plain-http LAN address: no webcam, files and photo upload instead", async ({ browser }: { browser: Browser }) => {
   const lan = process.env.E2E_LAN_URL;
   test.skip(!lan, "E2E_LAN_URL not set");
-  const page = await (await browser.newContext({ baseURL: lan, viewport: TABLET })).newPage();
+  const page = await (await browser.newContext({ baseURL: lan, viewport: DESK })).newPage();
   await signIn(page, { email: hr.email, password: hrFinal + "x" });
   await expect(page).toHaveURL(/\/intake$/);
   const jpeg = await page.screenshot({ type: "jpeg" }); // any real JPEG will do as a "camera" shot
@@ -362,18 +437,20 @@ test("intake over the LAN address uses the camera-app fallback", async ({ browse
   await page.getByLabel("Full name").fill(`${candidateName} LAN`);
   await page.getByLabel("Email (optional)").fill("");
   await page.getByRole("button", { name: /Next: consent/ }).click();
-  await page.getByRole("button", { name: "The candidate has the tablet" }).click();
+  await page.getByRole("button", { name: "The candidate can see the screen" }).click();
   await page.getByRole("checkbox", { name: /I have read this notice/ }).check();
   await page.getByRole("button", { name: "I agree, continue" }).click();
   await page.getByRole("button", { name: "HR: continue to CV" }).click();
 
-  await expect(page.getByText("Camera needs HTTPS — open the https:// address")).toBeVisible();
-  await shoot(page, "intake-4b-cv-lan-fallback", TABLET);
-  await page.locator('input[type=file][capture="environment"]').setInputFiles({ name: "page.jpg", mimeType: "image/jpeg", buffer: jpeg });
+  await page.getByTestId("cv-files").setInputFiles([pdfCv]);
+  await page.getByRole("button", { name: /Photograph a paper CV with the webcam/ }).click();
+  await expect(page.getByText(/The webcam needs the secure address/).first()).toBeVisible();
+  await shoot(page, "intake-4b-cv-lan-fallback", DESK);
+  await page.getByTestId("camera-upload").setInputFiles({ name: "page.jpg", mimeType: "image/jpeg", buffer: jpeg });
   await expect(page.getByRole("list", { name: "Captured pages" }).getByRole("listitem")).toHaveCount(1);
   await page.getByRole("button", { name: /Next: photo/ }).click();
-  await expect(page.getByText("Camera needs HTTPS — open the https:// address")).toBeVisible();
-  await page.locator('input[type=file][capture="user"]').setInputFiles({ name: "face.jpg", mimeType: "image/jpeg", buffer: jpeg });
+  await expect(page.getByText(/The webcam needs the secure address/).first()).toBeVisible();
+  await page.getByTestId("camera-upload").setInputFiles({ name: "face.jpg", mimeType: "image/jpeg", buffer: jpeg });
   await expect(page.getByRole("img", { name: "Candidate photo" })).toBeVisible();
   await page.getByRole("button", { name: /Next: save/ }).click();
   await page.getByRole("button", { name: "Save and get token" }).click();

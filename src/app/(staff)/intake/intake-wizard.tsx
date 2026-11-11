@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { IntakeDetails, MAX_CV_PAGES, MAX_UPLOAD_BYTES, normalizeMobile, type IntakeResult, type LookupResult } from "@/lib/intake";
+import { cvFileKind, IntakeDetails, MAX_CV_FILES, MAX_CV_PAGES, MAX_UPLOAD_BYTES, normalizeMobile, type IntakeResult, type LookupResult } from "@/lib/intake";
 import { formatDayIST } from "@/lib/ist";
 import { NOTICE_LANGUAGES, NOTICE_VERSION, noticeText, type NoticeLanguage } from "@/lib/notice";
 import { OUTCOME_LABELS } from "@/lib/options";
@@ -54,7 +54,10 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
   const [consentStage, setConsentStage] = useState<ConsentStage>("handover");
 
   const [pages, setPages] = useState<Shot[]>([]);
-  const [cvFile, setCvFile] = useState<File | null>(null);
+  const [cvFiles, setCvFiles] = useState<File[]>([]);
+  const [showCvCam, setShowCvCam] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const pickFiles = useRef<HTMLInputElement>(null);
   const [cvError, setCvError] = useState<string | null>(null);
   const [photo, setPhoto] = useState<Shot | null>(null);
 
@@ -64,7 +67,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
   const [result, setResult] = useState<IntakeResult | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(TOKEN_SECONDS);
 
-  // The candidate holds the tablet: hide everything HR-only and ignore the back button.
+  // The screen is turned towards the candidate: hide everything HR-only and ignore the back button / Esc.
   const candidateFacing = step === "consent" && (consentStage === "notice" || consentStage === "handback" || consentStage === "refused");
   const dirty = step !== "token" && (mobileInput.trim() !== "" || step !== "mobile");
 
@@ -124,7 +127,8 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
       if (p) URL.revokeObjectURL(p.url);
       return null;
     });
-    setCvFile(null);
+    setCvFiles([]);
+    setShowCvCam(false);
     setCvError(null);
   }, []);
 
@@ -144,6 +148,31 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
     setMaxStep(0);
     goTo("mobile");
   }, [clearFiles, goTo]);
+
+  // Keyboard first: each step puts the cursor on its first field (or the button marked data-autofocus).
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      const root = document.querySelector("[data-step-root]");
+      if (!root) return;
+      const visible = (el: HTMLElement) => el.offsetParent !== null && !(el as HTMLButtonElement).disabled;
+      const marked = [...root.querySelectorAll<HTMLElement>("[data-autofocus]")].find(visible);
+      const first = [...root.querySelectorAll<HTMLElement>("input:not(.sr-only), select, textarea, button")].find(visible);
+      (marked ?? first)?.focus();
+    });
+  }, [step, consentStage, photo, lookup]);
+
+  // Esc = back one step (asks first). Not while the candidate is reading the notice, nor on the token screen.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      const { step: cur, candidateFacing: locked } = live.current;
+      if (locked || cur === "mobile" || cur === "token") return;
+      const prev = STEPS[indexOf(cur) - 1]?.key;
+      if (prev && confirm("Go back to the previous step?")) goTo(prev);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [goTo]);
 
   // Token screen clears itself so the next candidate never sees the previous one.
   useEffect(() => {
@@ -199,12 +228,20 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
     requestAnimationFrame(() => document.querySelector("[aria-invalid=true], .text-red-700")?.scrollIntoView({ block: "center" }));
   }
 
-  function onCvFile(f: File | undefined) {
+  function addCvFiles(list: FileList | File[] | null | undefined) {
     setCvError(null);
-    if (!f) return;
-    if (f.size > MAX_UPLOAD_BYTES) return setCvError("That file is larger than 8 MB. Photograph the pages instead.");
-    if (!/^(application\/pdf|image\/(jpeg|png|webp))$/.test(f.type)) return setCvError("Upload a PDF, JPEG, PNG or WebP file.");
-    setCvFile(f);
+    const incoming = [...(list ?? [])];
+    const problems: string[] = [];
+    const ok = incoming.filter((f) => {
+      if (!cvFileKind(f)) problems.push(`${f.name}: use PDF, Word (.docx), JPEG, PNG or WebP`);
+      else if (f.size > MAX_UPLOAD_BYTES) problems.push(`${f.name}: larger than 8 MB`);
+      else return true;
+      return false;
+    });
+    const merged = [...cvFiles, ...ok.filter((f) => !cvFiles.some((c) => c.name === f.name && c.size === f.size))];
+    if (merged.length > MAX_CV_FILES) problems.push(`At most ${MAX_CV_FILES} files; the rest were not added`);
+    setCvFiles(merged.slice(0, MAX_CV_FILES));
+    if (problems.length) setCvError(problems.join(" · "));
   }
 
   async function onSave() {
@@ -223,7 +260,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
     );
     fd.set("photo", photo.blob, "photo.jpg");
     pages.forEach((p, i) => fd.append("cvPage", p.blob, `page-${i + 1}.jpg`));
-    if (cvFile) fd.set("cvFile", cvFile, cvFile.name);
+    cvFiles.forEach((f) => fd.append("cvFile", f, f.name));
 
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), SAVE_TIMEOUT_MS);
@@ -234,15 +271,15 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
         setResult(body as IntakeResult);
         goTo("token");
       } else if (res.status === 401) {
-        setSaveError("Your session ended. Sign in again in a new tab, then come back here and tap Save.");
+        setSaveError("Your session ended. Sign in again in a new tab, then come back here and press Save.");
       } else {
-        setSaveError(body?.error ?? `Could not save (error ${res.status}). Tap Save to try again.`);
+        setSaveError(body?.error ?? `Could not save (error ${res.status}). Press Save to try again.`);
       }
     } catch {
       setSaveError(
         navigator.onLine === false
-          ? "No network. Check the Wi-Fi, then tap Save again. The candidate will not be registered twice."
-          : "The server did not answer. Tap Save again. The candidate will not be registered twice.",
+          ? "No network. Check the PC's network connection, then press Save again. The candidate will not be registered twice."
+          : "The server did not answer. Press Save again. The candidate will not be registered twice.",
       );
     } finally {
       clearTimeout(timer);
@@ -268,7 +305,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
   );
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold">New candidate</h1>
         {dirty && step !== "mobile" && (
@@ -300,7 +337,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
       )}
 
       {step === "mobile" && (
-        <section className="card space-y-5" aria-labelledby="mobile-h">
+        <section className="card mx-auto max-w-3xl space-y-5" aria-labelledby="mobile-h" data-step-root>
           <h2 id="mobile-h" className="text-lg font-semibold">Candidate&apos;s mobile number</h2>
           <form onSubmit={onFind} className="flex flex-wrap gap-3">
             <label htmlFor="mobile" className="sr-only">Mobile number</label>
@@ -389,7 +426,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
           {lookup && normalizeMobile(mobileInput) === lookup.mobile &&
             nav(
               null,
-              <button type="button" onClick={() => goTo("details")} className="btn btn-primary h-14 px-8 text-lg">
+              <button type="button" data-autofocus onClick={() => goTo("details")} className="btn btn-primary h-14 px-8 text-lg">
                 {lookup.found ? "Continue with this candidate →" : "Next: details →"}
               </button>,
             )}
@@ -397,7 +434,15 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
       )}
 
       {step === "details" && (
-        <section className="card space-y-6" aria-label="Candidate details">
+        <form
+          className="card space-y-6"
+          aria-label="Candidate details"
+          data-step-root
+          onSubmit={(e) => {
+            e.preventDefault();
+            onDetailsNext();
+          }}
+        >
           <p className="text-slate-600">
             Mobile <strong className="text-slate-900">{lookup?.mobile}</strong>
             {lookup?.found ? " · returning candidate" : " · new candidate"}
@@ -417,20 +462,20 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
           />
           {nav(
             "mobile",
-            <button type="button" onClick={onDetailsNext} className="btn btn-primary h-14 px-8 text-lg">
+            <button type="submit" className="btn btn-primary h-14 px-8 text-lg">
               Next: consent →
             </button>,
           )}
-        </section>
+        </form>
       )}
 
       {step === "consent" && consentStage === "handover" && (
-        <section className="card space-y-6 text-center" aria-labelledby="handover-h">
-          <p className="text-5xl" aria-hidden="true">📱➜🙂</p>
-          <h2 id="handover-h" className="text-2xl font-semibold">Please hand the tablet to the candidate</h2>
-          <p className="text-slate-600">They read the privacy notice and tap to agree. The camera opens only after that.</p>
-          <button type="button" onClick={() => setConsentStage("notice")} className="btn btn-primary h-16 w-full text-xl">
-            The candidate has the tablet
+        <section className="card mx-auto max-w-3xl space-y-6 text-center" aria-labelledby="handover-h" data-step-root>
+          <p className="text-5xl" aria-hidden="true">🖥️➜🙂</p>
+          <h2 id="handover-h" className="text-2xl font-semibold">Please turn the screen towards the candidate</h2>
+          <p className="text-slate-600">They read the privacy notice and click &ldquo;I agree&rdquo;. The webcam opens only after that.</p>
+          <button type="button" data-autofocus onClick={() => setConsentStage("notice")} className="btn btn-primary h-16 w-full text-xl">
+            The candidate can see the screen
           </button>
           {nav("details", <span />)}
         </section>
@@ -438,10 +483,18 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
 
       {candidateFacing && (
         // Full screen over the staff header: the candidate only sees the notice.
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-50 px-4 py-8">
-          <div className="mx-auto max-w-2xl space-y-6">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-50 px-4 py-8" data-step-root>
+          <div className="mx-auto max-w-3xl space-y-6">
             {consentStage === "notice" && (
-              <section className="card space-y-5" aria-labelledby="notice-h" lang={consent.language === "hi" ? "hi" : "en"}>
+              <form
+                className="card space-y-5"
+                aria-labelledby="notice-h"
+                lang={consent.language === "hi" ? "hi" : "en"}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (consent.agreed) setConsentStage("handback");
+                }}
+              >
                 <div className="flex justify-end gap-2" role="group" aria-label="Language / भाषा">
                   {NOTICE_LANGUAGES.map((l) => (
                     <button
@@ -458,7 +511,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
                   ))}
                 </div>
                 <h2 id="notice-h" className="text-2xl font-semibold">{text.title}</h2>
-                {text.paragraphs.map((p, i) => <p key={i} className="text-lg leading-relaxed text-slate-800">{p}</p>)}
+                {text.paragraphs.map((p, i) => <p key={i} className="text-xl leading-relaxed text-slate-800">{p}</p>)}
                 <div className="space-y-3 pt-2">
                   {(
                     [
@@ -475,6 +528,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
                     >
                       <input
                         type="checkbox"
+                        data-autofocus={required || undefined}
                         checked={consent[key]}
                         onChange={(e) => setConsent((c) => ({ ...c, [key]: e.target.checked }))}
                         className="mt-1 size-7 shrink-0 accent-blue-700"
@@ -484,22 +538,22 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
                   ))}
                 </div>
                 {!consent.agreed && <p className="text-slate-600">{text.required}</p>}
-                <button type="button" disabled={!consent.agreed} onClick={() => setConsentStage("handback")} className="btn btn-primary h-16 w-full text-xl">
+                <button type="submit" disabled={!consent.agreed} className="btn btn-primary h-16 w-full text-xl">
                   {text.continue}
                 </button>
                 <button type="button" onClick={() => setConsentStage("refused")} className="btn btn-secondary w-full">
                   {consent.language === "hi" ? "मैं सहमत नहीं हूँ" : "I do not agree"}
                 </button>
                 <p className="text-center text-xs text-slate-400">Notice {NOTICE_VERSION}</p>
-              </section>
+              </form>
             )}
             {consentStage === "handback" && (
               <section className="card space-y-6 text-center" aria-labelledby="handback-h">
                 <p className="text-5xl" aria-hidden="true">🙏</p>
                 <h2 id="handback-h" className="text-2xl font-semibold">
-                  {consent.language === "hi" ? "धन्यवाद! कृपया टैबलेट HR को वापस दें।" : "Thank you! Please hand the tablet back to HR."}
+                  {consent.language === "hi" ? "धन्यवाद! कृपया स्क्रीन वापस HR की ओर घुमा दें।" : "Thank you! Please turn the screen back to HR."}
                 </h2>
-                <button type="button" onClick={() => goTo("cv")} className="btn btn-primary h-16 w-full text-xl">
+                <button type="button" data-autofocus onClick={() => goTo("cv")} className="btn btn-primary h-16 w-full text-xl">
                   HR: continue to CV
                 </button>
                 <button type="button" onClick={() => setConsentStage("notice")} className="btn btn-secondary w-full">
@@ -510,7 +564,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
             {consentStage === "refused" && (
               <section className="card space-y-6 text-center" aria-labelledby="refused-h">
                 <h2 id="refused-h" className="text-2xl font-semibold">
-                  {consent.language === "hi" ? "कोई बात नहीं। कृपया टैबलेट HR को वापस दें।" : "That's fine. Please hand the tablet back to HR."}
+                  {consent.language === "hi" ? "कोई बात नहीं। कृपया स्क्रीन वापस HR की ओर घुमा दें।" : "That's fine. Please turn the screen back to HR."}
                 </h2>
                 <p className="text-slate-600">HR: without consent the candidate can&apos;t be registered here. Nothing has been saved.</p>
                 <button
@@ -533,79 +587,129 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
       )}
 
       {step === "cv" && (
-        <section className="card space-y-5" aria-labelledby="cv-h">
+        <form
+          className="card mx-auto max-w-3xl space-y-5"
+          aria-labelledby="cv-h"
+          data-step-root
+          onSubmit={(e) => {
+            e.preventDefault();
+            goTo("photo");
+          }}
+        >
           <div>
-            <h2 id="cv-h" className="text-lg font-semibold">CV pages</h2>
-            <p className="text-slate-600">Photograph each page with the back camera (up to {MAX_CV_PAGES}), or upload a PDF or image. You can skip this.</p>
+            <h2 id="cv-h" className="text-lg font-semibold">CV</h2>
+            <p className="text-slate-600">Upload the CV files, or photograph a paper CV with the webcam. You can skip this.</p>
           </div>
-          {pages.length < MAX_CV_PAGES && !cvFile && (
-            <Camera
-              facing="environment"
-              maxLong={1800}
-              captureLabel={`Capture page ${pages.length + 1}`}
-              onCapture={(b) => setPages((p) => (p.length < MAX_CV_PAGES ? [...p, shot(b)] : p))}
+
+          <div
+            data-testid="cv-drop"
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              addCvFiles(e.dataTransfer.files);
+            }}
+            className={`rounded-xl border-2 border-dashed p-6 text-center ${dragOver ? "border-blue-600 bg-blue-50" : "border-slate-300 bg-slate-50"}`}
+          >
+            <p className="text-lg font-medium">Drop CV files here</p>
+            <p className="text-sm text-slate-600">PDF, Word (.docx) or images · up to {MAX_CV_FILES} files · 8 MB each</p>
+            <button type="button" onClick={() => pickFiles.current?.click()} className="btn btn-primary mt-3">
+              Upload CV files…
+            </button>
+            <input
+              ref={pickFiles}
+              type="file"
+              multiple
+              accept=".pdf,.docx,.jpg,.jpeg,.png,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png,image/webp"
+              className="sr-only"
+              tabIndex={-1}
+              aria-label="CV files"
+              data-testid="cv-files"
+              onChange={(e) => {
+                addCvFiles(e.target.files);
+                e.target.value = "";
+              }}
             />
-          )}
-          {pages.length >= MAX_CV_PAGES && <p className="alert-success">{MAX_CV_PAGES} pages captured (the most allowed).</p>}
-          {pages.length > 0 && (
-            <ul className="grid grid-cols-3 gap-3 sm:grid-cols-5" aria-label="Captured pages">
-              {pages.map((p, i) => (
-                <li key={p.url} className="space-y-1">
-                  <div className="relative aspect-[3/4] overflow-hidden rounded-md border border-slate-200 bg-slate-100">
-                    <Image src={p.url} alt={`CV page ${i + 1}`} fill unoptimized className="object-contain" />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      URL.revokeObjectURL(p.url);
-                      setPages((all) => all.filter((x) => x !== p));
-                    }}
-                    className="btn btn-danger h-10 w-full px-2 text-sm"
-                  >
-                    Remove {i + 1}
+          </div>
+          <p className="text-sm text-slate-600">Candidates can email or WhatsApp their CV to HR. Download it on this PC and drop it here.</p>
+          {cvError && <p role="alert" className="alert-error">{cvError}</p>}
+          {cvFiles.length > 0 && (
+            <ul className="space-y-2" aria-label="CV files to save">
+              {cvFiles.map((f) => (
+                <li key={`${f.name}-${f.size}`} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 p-3">
+                  <span className="break-all">
+                    📄 {f.name} <span className="text-slate-500">({Math.ceil(f.size / 1024)} KB)</span>
+                  </span>
+                  <button type="button" onClick={() => setCvFiles((all) => all.filter((x) => x !== f))} className="btn btn-danger h-10 text-sm">
+                    Remove
                   </button>
                 </li>
               ))}
             </ul>
           )}
-          {pages.length === 0 && (
-            <div className="space-y-2 border-t border-slate-200 pt-4">
-              {cvFile ? (
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 p-3">
-                  <span className="break-all">📄 {cvFile.name} ({Math.ceil(cvFile.size / 1024)} KB)</span>
-                  <button type="button" onClick={() => setCvFile(null)} className="btn btn-danger">Remove file</button>
-                </div>
-              ) : (
-                <label className="btn btn-secondary w-full">
-                  Upload CV file instead (PDF or image, max 8 MB)
-                  <input
-                    type="file"
-                    accept="application/pdf,image/jpeg,image/png,image/webp"
-                    className="sr-only"
-                    onChange={(e) => {
-                      onCvFile(e.target.files?.[0]);
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
-              )}
-              {cvError && <p role="alert" className="alert-error">{cvError}</p>}
-            </div>
-          )}
+
+          <div className="space-y-3 border-t border-slate-200 pt-4">
+            <button type="button" onClick={() => setShowCvCam((x) => !x)} aria-expanded={showCvCam} className="btn btn-secondary">
+              📷 {showCvCam ? "Hide the webcam" : "Photograph a paper CV with the webcam"}
+            </button>
+            {showCvCam && pages.length < MAX_CV_PAGES && (
+              <Camera
+                guide="document"
+                maxLong={1800}
+                captureLabel={`Capture page ${pages.length + 1}`}
+                uploadLabel="Add a page from an image file"
+                onCapture={(b) => setPages((p) => (p.length < MAX_CV_PAGES ? [...p, shot(b)] : p))}
+              />
+            )}
+            {pages.length >= MAX_CV_PAGES && <p className="alert-success">{MAX_CV_PAGES} pages captured (the most allowed).</p>}
+            {pages.length > 0 && (
+              <ul className="grid grid-cols-3 gap-3 sm:grid-cols-5" aria-label="Captured pages">
+                {pages.map((p, i) => (
+                  <li key={p.url} className="space-y-1">
+                    <div className="relative aspect-[3/4] overflow-hidden rounded-md border border-slate-200 bg-slate-100">
+                      <Image src={p.url} alt={`CV page ${i + 1}`} fill unoptimized className="object-contain" />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        URL.revokeObjectURL(p.url);
+                        setPages((all) => all.filter((x) => x !== p));
+                      }}
+                      className="btn btn-danger h-10 w-full px-2 text-sm"
+                    >
+                      Remove {i + 1}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           {nav(
             "consent",
-            <button type="button" onClick={() => goTo("photo")} className="btn btn-primary h-14 px-8 text-lg">
-              {pages.length || cvFile ? "Next: photo →" : "Skip CV →"}
+            <button type="submit" data-autofocus className="btn btn-primary h-14 px-8 text-lg">
+              {pages.length || cvFiles.length ? "Next: photo →" : "Skip CV →"}
             </button>,
           )}
-        </section>
+        </form>
       )}
 
       {step === "photo" && (
-        <section className="card space-y-5" aria-labelledby="photo-h">
+        <form
+          className="card mx-auto max-w-3xl space-y-5"
+          aria-labelledby="photo-h"
+          data-step-root
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (photo) goTo("save");
+          }}
+        >
           <div>
             <h2 id="photo-h" className="text-lg font-semibold">Candidate photo</h2>
-            <p className="text-slate-600">Front camera. Fit the face inside the oval, plain background, no cap or sunglasses.</p>
+            <p className="text-slate-600">Ask the candidate to look at the webcam. Fit the face inside the oval, plain background, no cap or sunglasses.</p>
           </div>
           {photo && (
             <div className="space-y-3">
@@ -626,19 +730,27 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
           )}
           {/* Stays mounted while the photo is reviewed, so Retake doesn't close and reopen the camera. */}
           <div hidden={photo !== null}>
-            <Camera facing="user" maxLong={800} portrait captureLabel="Take photo" onCapture={(b) => setPhoto(shot(b))} />
+            <Camera guide="face" maxLong={800} captureLabel="Take photo" uploadLabel="Upload a photo file instead" autoFocusCapture onCapture={(b) => setPhoto(shot(b))} />
           </div>
           {nav(
             "cv",
-            <button type="button" disabled={!photo} onClick={() => goTo("save")} className="btn btn-primary h-14 px-8 text-lg">
+            <button type="submit" disabled={!photo} data-autofocus className="btn btn-primary h-14 px-8 text-lg">
               Next: save →
             </button>,
           )}
-        </section>
+        </form>
       )}
 
       {step === "save" && lookup && (
-        <section className="card space-y-5" aria-labelledby="save-h">
+        <form
+          className="card mx-auto max-w-3xl space-y-5"
+          aria-labelledby="save-h"
+          data-step-root
+          onSubmit={(e) => {
+            e.preventDefault();
+            void onSave();
+          }}
+        >
           <h2 id="save-h" className="text-lg font-semibold">Check and save</h2>
           <div className="flex gap-4">
             {photo && (
@@ -654,7 +766,9 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
               <dt className="text-slate-500">Position</dt>
               <dd>{job?.title ?? "—"}</dd>
               <dt className="text-slate-500">CV</dt>
-              <dd>{pages.length ? `${pages.length} page photo${pages.length > 1 ? "s" : ""}` : cvFile ? cvFile.name : "None"}</dd>
+              <dd className="break-all">
+                {[cvFiles.map((f) => f.name).join(", "), pages.length && `${pages.length} webcam page${pages.length > 1 ? "s" : ""}`].filter(Boolean).join(" · ") || "None"}
+              </dd>
               <dt className="text-slate-500">Consent</dt>
               <dd>
                 Agreed ({NOTICE_LANGUAGES.find((l) => l.value === consent.language)?.label})
@@ -666,15 +780,15 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
           {saveError && <p role="alert" className="alert-error">{saveError}</p>}
           {nav(
             "photo",
-            <button type="button" onClick={onSave} disabled={saving} className="btn btn-primary h-16 px-10 text-xl">
+            <button type="submit" disabled={saving} data-autofocus className="btn btn-primary h-16 px-10 text-xl">
               {saving ? "Saving…" : "Save and get token"}
             </button>,
           )}
-        </section>
+        </form>
       )}
 
       {step === "token" && result && (
-        <section className="card space-y-6 text-center" aria-labelledby="token-h">
+        <section className="card mx-auto max-w-3xl space-y-6 text-center" aria-labelledby="token-h" data-step-root>
           <p className="text-lg text-slate-600">Your token</p>
           <p id="token-h" className="text-8xl font-bold tracking-tight text-blue-800" data-testid="token">{result.token}</p>
           <div>
@@ -697,7 +811,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
               </ul>
             </div>
           )}
-          <button type="button" onClick={reset} className="btn btn-primary h-16 w-full text-xl">
+          <button type="button" data-autofocus onClick={reset} className="btn btn-primary h-16 w-full text-xl">
             Next candidate
           </button>
           <p className="text-sm text-slate-500">This screen clears in {secondsLeft} s.</p>

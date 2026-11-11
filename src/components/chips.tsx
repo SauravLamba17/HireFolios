@@ -1,6 +1,6 @@
 "use client";
 
-// Multi-select as large toggle buttons (easier than checkboxes on a tablet).
+// Multi-select as large toggle buttons (bigger targets than checkboxes; keyboard: Tab + Space).
 export function Chips({
   label,
   options,

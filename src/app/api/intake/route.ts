@@ -3,15 +3,15 @@ import { and, asc, eq, lt, sql } from "drizzle-orm";
 import { db, isUniqueViolation } from "@/db";
 import { applications, candidateFiles, candidates, consents, dailyCounters, jobs, locations, stages } from "@/db/schema";
 import { searchTextFor } from "@/lib/candidate-search";
-import { sniffType, storageKey, sha256, uploadRoot, writeFileUnder, type FileType } from "@/lib/files";
-import { firstIssue, IntakeRequest, MAX_CV_PAGES, MAX_PAGE_BYTES, MAX_PHOTO_BYTES, MAX_UPLOAD_BYTES, type IntakeResult } from "@/lib/intake";
+import { DOCX, sniffType, storageKey, sha256, uploadRoot, writeFileUnder, type FileType } from "@/lib/files";
+import { firstIssue, IntakeRequest, MAX_CV_FILES, MAX_CV_PAGES, MAX_PAGE_BYTES, MAX_PHOTO_BYTES, MAX_UPLOAD_BYTES, type IntakeResult } from "@/lib/intake";
 import { todayIST } from "@/lib/ist";
 import { publish } from "@/lib/live";
 import { lpaToRupees } from "@/lib/money";
 import { requireStaffApi } from "@/lib/session";
 import { audit } from "@/lib/staff";
 
-const MAX_REQUEST_BYTES = MAX_PHOTO_BYTES + MAX_CV_PAGES * MAX_PAGE_BYTES + MAX_UPLOAD_BYTES + 256 * 1024;
+const MAX_REQUEST_BYTES = MAX_PHOTO_BYTES + MAX_CV_PAGES * MAX_PAGE_BYTES + MAX_CV_FILES * MAX_UPLOAD_BYTES + 256 * 1024;
 
 const bad = (error: string, status = 400) => Response.json({ error }, { status });
 
@@ -102,7 +102,7 @@ export async function POST(req: Request) {
   if (!parsed.success) return bad(firstIssue(parsed.error));
   const { clientRequestId, mobile, details: d, consent } = parsed.data;
 
-  // A retry of a save that already went through (tablet lost the reply): same answer, nothing new.
+  // A retry of a save that already went through (the browser lost the reply): same answer, nothing new.
   const done = await resultFor(staff.tenantId, clientRequestId);
   if (done) return Response.json(done);
 
@@ -118,9 +118,13 @@ export async function POST(req: Request) {
     if (typeof page === "string") return bad(page);
     if (page) uploads.push({ kind: "cv_page", pageNo: i + 1, ...page });
   }
-  const file = await readUpload(form.get("cvFile"), MAX_UPLOAD_BYTES, ["application/pdf", "image/jpeg", "image/png", "image/webp"], "The CV file");
-  if (typeof file === "string") return bad(file);
-  if (file) uploads.push({ kind: "cv_upload", pageNo: null, ...file });
+  const cvFiles = form.getAll("cvFile");
+  if (cvFiles.length > MAX_CV_FILES) return bad(`At most ${MAX_CV_FILES} CV files.`);
+  for (const [i, f] of cvFiles.entries()) {
+    const file = await readUpload(f, MAX_UPLOAD_BYTES, ["application/pdf", DOCX, "image/jpeg", "image/png", "image/webp"], cvFiles.length > 1 ? `CV file ${i + 1}` : "The CV file");
+    if (typeof file === "string") return bad(file);
+    if (file) uploads.push({ kind: "cv_upload", pageNo: null, ...file });
+  }
 
   const written: string[] = [];
   try {

@@ -79,7 +79,7 @@ const details = (over: Record<string, unknown> = {}) => ({
 const consent = (over: Record<string, unknown> = {}) => ({ agreed: true, language: "hi", noticeVersion: NOTICE_VERSION, talentPool: false, whatsapp: true, ...over });
 const firstError = (r: { success: boolean; error?: { issues: { message: string }[] } }) => r.error?.issues[0].message;
 
-describe("intake schema (shared by tablet and server)", () => {
+describe("intake schema (shared by the browser and the server)", () => {
   it("accepts a full RCM profile and tidies it", () => {
     const r = IntakeRequest.parse({ clientRequestId: crypto.randomUUID(), mobile: "+91 98765-43210", details: details(), consent: consent() });
     expect(r.mobile).toBe("9876543210");

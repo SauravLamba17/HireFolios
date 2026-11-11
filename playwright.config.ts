@@ -16,8 +16,8 @@ export default defineConfig({
   use: {
     baseURL,
     channel: process.env.PW_CHANNEL || undefined, // chrome | msedge, else Playwright's own Chromium
-    // A fake camera (moving test pattern) with permission already granted.
-    launchOptions: { args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] },
+    // Two fake webcams (moving test pattern) with permission already granted.
+    launchOptions: { args: ["--use-fake-device-for-media-stream=device-count=2", "--use-fake-ui-for-media-stream"] },
   },
   webServer: {
     command: "npm run start",

@@ -33,8 +33,8 @@ export async function signIn(page: Page, who: { email: string; password: string 
 const SHOTS = process.env.SHOTS_DIR;
 export const VIEWPORTS = [
   { name: "1440", width: 1440, height: 900 },
+  { name: "1366x768", width: 1366, height: 768 }, // common HR desk / office laptop
   { name: "1024", width: 1024, height: 768 },
-  { name: "800x1280", width: 800, height: 1280 },
 ];
 
 /** Full-page screenshot at each size, then back to `restore`. */
