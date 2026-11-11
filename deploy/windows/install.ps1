@@ -12,11 +12,6 @@ param(
   [ValidateSet("", "internal", "cloudflare")][string]$HttpsOption = "",
   [string]$AdminEmail = "",
   [string]$AdminName = "Admin",
-  # Scripted installs only. Normally leave it out and type the password when asked: a password written on the
-  # command line is also recorded in the install log's header (logs\install-*.log, Administrators only).
-  [securestring]$AdminPassword,
-  # PostgreSQL that is already installed (not by this script): its "postgres" password.
-  [securestring]$PostgresSuperuserPassword,
   # No internet: the PostgreSQL 16 installer (.exe from enterprisedb.com) copied to this PC.
   [string]$PostgresInstaller = "",
   [string]$InstallDir = "C:\hirefolios",
@@ -53,9 +48,10 @@ Write-Ok "$freeGB GB free on $($drive.Name):"
 New-Item -ItemType Directory -Force -Path $InstallDir, (Join-Path $InstallDir "logs") | Out-Null
 $transcript = Join-Path $InstallDir "logs\install-$(Get-Date -Format yyyy-MM-dd_HHmmss).log"
 Start-Transcript -Path $transcript | Out-Null
+$envPath = Join-Path $InstallDir ".env"
+$logSecrets = @(); $adminPlain = "" # secrets of this run, scanned for in the logs at the end
 
 try {
-  $envPath = Join-Path $InstallDir ".env"
   $kept = Join-Path $DataDir "config\hirefolios.env" # left here by uninstall.ps1 when data is kept
   $cfg = Read-EnvFile $envPath
   if ($cfg.Count -eq 0 -and (Test-Path -LiteralPath $kept)) {
@@ -162,14 +158,10 @@ try {
     try { Invoke-Psql -Bin $pg.Bin -User $d.User -Password $d.Password -Database $d.Database -Sql "select 1;" | Out-Null; $dbOk = $true } catch { Write-Note "saved database login does not work any more; repairing it" }
   }
   if (-not $dbOk) {
-    if (-not $pgSuper -and $PostgresSuperuserPassword) {
-      $b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($PostgresSuperuserPassword)
-      $pgSuper = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($b); [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b)
-    }
     for ($try = 1; ; $try++) {
       if (-not $pgSuper) { $pgSuper = Read-Secret "Password of the PostgreSQL 'postgres' user (set when PostgreSQL was installed)" }
       try { Invoke-Psql -Bin $pg.Bin -User postgres -Password $pgSuper -Sql "select 1;" | Out-Null; break } catch {
-        if ($try -ge 3 -or $PostgresSuperuserPassword) { throw "Could not sign in to PostgreSQL as 'postgres' ($($_.Exception.Message))." }
+        if ($try -ge 3) { throw "Could not sign in to PostgreSQL as 'postgres' ($($_.Exception.Message))." }
         Write-Warning "That password did not work. Try again."
         $pgSuper = ""
       }
@@ -212,7 +204,6 @@ SELECT 'exists' FROM pg_database WHERE datname = 'hirefolios';
     $admins = Invoke-Psql -Bin $pg.Bin -User $d.User -Password $d.Password -Database $d.Database -Sql "select count(*) from users where role = 'admin' and active;"
     $needAdmin = ($admins | Select-Object -First 1) -eq "0"
   }
-  $adminPlain = ""
   if ($needAdmin) {
     Write-Step "First admin account"
     for ($try = 1; -not $AdminEmail; $try++) {
@@ -221,11 +212,6 @@ SELECT 'exists' FROM pg_database WHERE datname = 'hirefolios';
     }
     $AdminEmail = $AdminEmail.Trim().ToLowerInvariant()
     if ($AdminEmail -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') { throw "'$AdminEmail' is not an email address." }
-    if ($AdminPassword) {
-      $b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($AdminPassword)
-      $adminPlain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($b); [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b)
-      if ($adminPlain.Length -lt 8 -or $adminPlain.Length -gt 128) { throw "The admin password must be 8 to 128 characters." }
-    }
     for ($try = 1; -not $adminPlain; $try++) {
       $p1 = Read-Secret "Admin password (8 or more characters; it is not shown while you type)"
       if ($p1.Length -lt 8 -or $p1.Length -gt 128) { Write-Warning "The password must be 8 to 128 characters." }
@@ -393,6 +379,7 @@ SELECT 'exists' FROM pg_database WHERE datname = 'hirefolios';
   $values["SEED_ON_START"] = "0"
   Write-EnvFile $envPath $values $header
   Protect-Path $envPath -Read @($appAcct, $(if ($HttpsOption -eq "cloudflare") { $caddyAcct }))
+  $logSecrets = @($adminPlain) # scanned for at the end, then forgotten
   $adminPlain = ""
 
   # ---------------------------------------------------------------- network
@@ -441,4 +428,12 @@ SELECT 'exists' FROM pg_database WHERE datname = 'hirefolios';
   Write-Host ""
 } finally {
   Stop-Transcript | Out-Null
+  # No secret in any log: every value from .env that is a secret, plus the admin password typed this run.
+  $final = Read-EnvFile $envPath
+  $secretValues = @($logSecrets) + @($adminPlain) + @("BETTER_AUTH_SECRET", "PG_SUPERUSER_PASSWORD", "CLOUDFLARE_API_TOKEN", "SEED_ADMIN_PASSWORD" | ForEach-Object { $final[$_] })
+  if ($final["DATABASE_URL"]) { $secretValues += (Get-PgConnection $final["DATABASE_URL"]).Password }
+  $cleaned = Remove-SecretFromLog -Folder (Join-Path $InstallDir "logs") -Secrets $secretValues
+  foreach ($f in $cleaned) { Write-Warning "A secret was found in $f and was replaced by [removed]." }
+  if (-not $cleaned) { Write-Host "   OK  no secret in any log in $InstallDir\logs" -ForegroundColor Green }
+  $logSecrets = @(); $secretValues = @(); $adminPlain = ""
 }

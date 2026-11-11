@@ -179,3 +179,25 @@ function Invoke-Psql {
     return $out
   } finally { $env:PGPASSWORD = $old }
 }
+
+# Replaces every given secret (8+ characters) in the text files of a folder by "[removed]".
+# Returns the files that had one. Used at the end of install.ps1: no secret may stay in a log.
+function Remove-SecretFromLog([string]$Folder, [string[]]$Secrets) {
+  $list = @($Secrets | Where-Object { $_ -and $_.Length -ge 8 } | Select-Object -Unique)
+  $hit = @()
+  if (-not $list -or -not (Test-Path -LiteralPath $Folder)) { return $hit }
+  foreach ($f in Get-ChildItem -LiteralPath $Folder -File -Recurse) {
+    # Service logs may be open for writing: read with shared access.
+    try {
+      $fs = [IO.File]::Open($f.FullName, "Open", "Read", "ReadWrite")
+      try { $text = (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+    } catch { continue }
+    $new = $text
+    foreach ($x in $list) { $new = $new.Replace($x, "[removed]") }
+    if ($new -ne $text) {
+      try { [IO.File]::WriteAllText($f.FullName, $new); $hit += $f.FullName }
+      catch { $hit += "$($f.FullName) (IN USE, NOT CLEANED: stop the service and delete this file)" }
+    }
+  }
+  return $hit
+}

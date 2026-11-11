@@ -227,7 +227,7 @@ Phase 3 is complete (2026-11-11): native Windows install, no Docker for Simplen.
 | 16 | PostgreSQL's uninstaller leaves its folder and empty registry keys | minor | removed when install.ps1 installed it (folder: re-tested; registry part written after the last run) |
 | 17 | Windows PowerShell 5.1 on older Windows 10 may offer only TLS 1.0 | minor (preventive) | TLS 1.2 enabled in common.ps1 |
 | 18 | PSScriptAnalyzer: unused variable, plural nouns; CLAUDE.md command block had broken characters | minor | fixed |
-| 19 | A password passed as `-AdminPassword` on a command line ends up in the install log header (Administrators-only folder) | minor | documented on the parameter; the guide never uses it (typed at the prompt) |
+| 19 | A password passed as `-AdminPassword` on a command line ends up in the install log header (Administrators-only folder) | major | `-AdminPassword` and `-PostgresSuperuserPassword` removed (passwords only at the masked prompt); install.ps1 ends by scanning every file in `logs\` for each secret in `.env` and the admin password, and replaces any hit by `[removed]` (unit check 6/6; full install not re-run) |
 | 20 | (test check) "data kept" compared audit row counts; the deletion job adds an audit row at every start | none | not a product issue |
 
 ### Known issues / left open after Phase 3
