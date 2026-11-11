@@ -1,0 +1,64 @@
+# Production: Postgres + the app + Caddy (HTTPS). Settings come from .env.production:
+#   docker compose --env-file .env.production up -d --build
+# See docs/INSTALL.md. The development database is docker-compose.dev.yml.
+name: hirefolios
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hirefolios
+      POSTGRES_DB: hirefolios
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hirefolios -d hirefolios"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    image: hirefolios-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://hirefolios:${POSTGRES_PASSWORD}@db:5432/hirefolios
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env.production}
+      BETTER_AUTH_URL: https://${APP_DOMAIN:?Set APP_DOMAIN in .env.production}
+      BETTER_AUTH_TRUSTED_ORIGINS: ${BETTER_AUTH_TRUSTED_ORIGINS:-}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Admin}
+      TZ: Asia/Kolkata
+    volumes:
+      # Photos and CVs live on the PC's disk (backed up by deploy/backup.ps1), not inside Docker.
+      - ${UPLOAD_HOST_DIR:?Set UPLOAD_HOST_DIR in .env.production}:/data/uploads
+
+  caddy:
+    build: deploy/caddy
+    image: hirefolios-caddy
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+    volumes:
+      # Option A (Let's Encrypt via Cloudflare DNS): CADDYFILE=Caddyfile.cloudflare
+      # Option B (Caddy's own certificate, installed on each PC): CADDYFILE=Caddyfile.internal
+      - ./deploy/${CADDYFILE:-Caddyfile.internal}:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

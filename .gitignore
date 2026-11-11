@@ -17,6 +17,7 @@ next-env.d.ts
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # uploaded files and local database data (never public, never committed)
 /data

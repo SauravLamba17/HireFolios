@@ -1,0 +1,9 @@
+# Option A: a real Let's Encrypt certificate, proved through Cloudflare DNS.
+# The PC does not need to be reachable from the internet. Needs CLOUDFLARE_API_TOKEN (Zone.DNS edit).
+{$APP_DOMAIN} {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+		resolvers 1.1.1.1
+	}
+	reverse_proxy app:3000
+}

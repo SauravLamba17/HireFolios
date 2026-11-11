@@ -1,0 +1,6 @@
+# Option B: Caddy's own certificate authority (no internet, no Cloudflare).
+# Each office PC must trust Caddy's root certificate once: see docs/INSTALL.md, "Option B".
+{$APP_DOMAIN} {
+	tls internal
+	reverse_proxy app:3000
+}
