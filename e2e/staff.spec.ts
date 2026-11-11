@@ -43,7 +43,7 @@ test("admin adds an HR user", async ({ page }) => {
   await expect(page.getByRole("row").filter({ hasText: hr.email })).toBeVisible();
 
   await shoot(page, "users");
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
 });
 
