@@ -8,6 +8,7 @@ import { db, pgClient } from "@/db";
 import * as s from "@/db/schema";
 import { uploadRoot } from "@/lib/files";
 import { NOTICE_VERSION } from "@/lib/notice";
+import { planPurge, runPurge } from "@/lib/purge";
 import { createStaff } from "@/lib/staff";
 
 const BASE = (process.env.SMOKE_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
@@ -31,6 +32,18 @@ async function pace() {
   if (signIns.length >= 2) await new Promise((r) => setTimeout(r, 10_700 - (now - Math.max(...signIns))));
   signIns = signIns.filter((t) => Date.now() - t < 10_500);
   signIns.push(Date.now());
+}
+// Another process (e2e, QA) may have used this IP's sign-in budget just before: wait it out once.
+async function signInCall(who: unknown, anon = false) {
+  await pace();
+  const init = { method: "POST", anon, headers: { "content-type": "application/json" }, body: JSON.stringify(who) };
+  let res = await call("/api/auth/sign-in/email", init);
+  if (res.status === 429) {
+    await new Promise((r) => setTimeout(r, 11_000));
+    signIns = [Date.now()];
+    res = await call("/api/auth/sign-in/email", init);
+  }
+  return res;
 }
 async function call(p: string, init: RequestInit & { anon?: boolean } = {}) {
   const headers = new Headers(init.headers);
@@ -143,8 +156,7 @@ async function main() {
     let r = await call(`/api/candidates/lookup?mobile=${m1}`, { anon: true });
     check("lookup signed out → 401", r.status === 401, r.status);
 
-    await pace();
-    r = await call("/api/auth/sign-in/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(hr) });
+    r = await signInCall(hr);
     cookie = r.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
     check("HR signs in", r.status === 200 && cookie.includes("session_token"), r.status);
 
@@ -286,8 +298,7 @@ async function main() {
     const hrCookie = cookie;
     const cookies: Record<string, string> = {};
     for (const [k, who] of Object.entries(people)) {
-      await pace();
-      const res = await call("/api/auth/sign-in/email", { method: "POST", anon: true, headers: { "content-type": "application/json" }, body: JSON.stringify(who) });
+      const res = await signInCall(who, true);
       cookies[k] = res.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
     }
     const as = (who: string) => (p: string, init: RequestInit = {}) => {
@@ -379,6 +390,74 @@ async function main() {
     const audit2 = await db.select().from(s.auditLog).where(eq(s.auditLog.tenantId, A.tenant.id));
     check("drive actions audited with ids only", audit2.some((a) => a.action === "interview.decision") && audit2.some((a) => a.action === "queue.assign") && audit2.every((a) => !pii.some((p) => JSON.stringify(a.meta ?? {}).includes(p))));
     cookie = hrCookie;
+
+    // ---------- Phase 3: the deletion job, in its own tenant, with dates shifted into the past ----------
+    const P = await makeTenant("purge");
+    created.push(P.tenant.id);
+    const [stg] = await db.select().from(s.stages).where(sql`${s.stages.tenantId} = ${P.tenant.id} and ${s.stages.name} = 'Registered'`);
+    const [locP] = await db.select().from(s.locations).where(eq(s.locations.tenantId, P.tenant.id));
+    const DAY = 864e5;
+    const nowP = new Date();
+    const ago = (d: number) => new Date(nowP.getTime() - d * DAY);
+    const ahead = (d: number) => new Date(nowP.getTime() + d * DAY);
+    const mkCandidate = async (label: string, visits: { outcome: string; purge: Date | null; photo: Date | null }[], pool: boolean) => {
+      const [c] = await db.insert(s.candidates).values({ tenantId: P.tenant.id, fullName: `Smoke Purge ${label}`, mobile: mobileFor(500 + Object.keys(purgeCase).length) }).returning();
+      const apps: string[] = [];
+      const files: string[] = [];
+      for (const [i, v] of visits.entries()) {
+        const [a] = await db
+          .insert(s.applications)
+          .values({
+            tenantId: P.tenant.id, candidateId: c.id, jobId: P.open.id, locationId: locP.id, token: `A-${label}${i}`, tokenDate: "2025-01-01",
+            currentStageId: stg.id, clientRequestId: crypto.randomUUID(), outcome: v.outcome as never, rejectReason: v.outcome === "rejected" ? "x" : null,
+            decidedAt: v.purge ? ago(400) : null, purgeAfter: v.purge, photoPurgeAfter: v.photo,
+          })
+          .returning();
+        apps.push(a.id);
+        for (const kind of ["photo", "cv_page"] as const) {
+          const fid = crypto.randomUUID();
+          const key = `${P.tenant.id}/${c.id}/${fid}.jpg`;
+          fs.mkdirSync(path.join(root, P.tenant.id, c.id), { recursive: true });
+          fs.writeFileSync(path.join(root, key), jpegBytes);
+          await db.insert(s.candidateFiles).values({ id: fid, tenantId: P.tenant.id, candidateId: c.id, applicationId: a.id, kind, storageKey: key, mimeType: "image/jpeg", sizeBytes: 4 });
+          files.push(key);
+        }
+        await db.insert(s.consents).values({ tenantId: P.tenant.id, candidateId: c.id, applicationId: a.id, noticeVersion: "t", talentPool: pool });
+      }
+      purgeCase[label] = { id: c.id, apps, files };
+    };
+    const jpegBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+    const purgeCase: Record<string, { id: string; apps: string[]; files: string[] }> = {};
+    await mkCandidate("old", [{ outcome: "rejected", purge: ago(1), photo: ago(100) }], false); // → erase all
+    await mkCandidate("photoOnly", [{ outcome: "no_show", purge: ahead(30), photo: ago(1) }], false); // → photo only
+    await mkCandidate("pool", [{ outcome: "rejected", purge: ago(1), photo: ago(1) }], true); // → keep (talent pool)
+    await mkCandidate("joined", [{ outcome: "rejected", purge: ago(10), photo: ahead(10) }, { outcome: "joined", purge: null, photo: null }], false); // → keep
+    await mkCandidate("newer", [{ outcome: "rejected", purge: ago(10), photo: ahead(10) }, { outcome: "in_progress", purge: null, photo: null }], false); // → keep
+
+    const dry = await runPurge({ dryRun: true, tenantId: P.tenant.id, now: nowP });
+    check("deletion dry run: 1 candidate and 1 photo due, nothing deleted yet", JSON.stringify(dry) === JSON.stringify([{ tenantId: P.tenant.id, photos: 1, candidates: 1, files: 0 }]) && fs.existsSync(path.join(root, purgeCase.old.files[0])), dry);
+    const later = await planPurge(new Date(nowP.getTime() + 31 * DAY), P.tenant.id);
+    check("dry run 31 days ahead also includes the photo-only candidate", later[0]?.candidates.sort().join() === [purgeCase.old.id, purgeCase.photoOnly.id].sort().join(), later);
+    const realRun = await runPurge({ dryRun: false, tenantId: P.tenant.id, now: nowP });
+    check("real run: same counts as the dry run, files removed", realRun[0].candidates === 1 && realRun[0].photos === 1 && realRun[0].files === 3, realRun);
+    const exists = async (table: typeof s.candidates, id: string) => (await db.$count(table, eq(table.id, id))) === 1;
+    const fileState = (k: string) => fs.existsSync(path.join(root, k));
+    check(
+      "erased: the expired candidate, rows and files",
+      !(await exists(s.candidates, purgeCase.old.id)) && (await db.$count(s.applications, eq(s.applications.candidateId, purgeCase.old.id))) === 0 && purgeCase.old.files.every((k) => !fileState(k)),
+    );
+    const [ph] = await db.select().from(s.candidateFiles).where(sql`${s.candidateFiles.candidateId} = ${purgeCase.photoOnly.id} and ${s.candidateFiles.kind} = 'photo'`);
+    check(
+      "photo-only: photo gone (row marked), CV page and candidate kept",
+      ph.deletedAt !== null && !fileState(purgeCase.photoOnly.files[0]) && fileState(purgeCase.photoOnly.files[1]) && (await exists(s.candidates, purgeCase.photoOnly.id)),
+    );
+    for (const k of ["pool", "joined", "newer"]) {
+      check(`kept untouched: ${k}`, (await exists(s.candidates, purgeCase[k].id)) && purgeCase[k].files.every(fileState) && (await db.$count(s.candidateFiles, sql`${s.candidateFiles.candidateId} = ${purgeCase[k].id} and ${s.candidateFiles.deletedAt} is not null`)) === 0);
+    }
+    const runs = await db.select().from(s.auditLog).where(sql`${s.auditLog.tenantId} = ${P.tenant.id} and ${s.auditLog.action} = 'retention.purge'`);
+    check("one audit entry for the run, counts only", runs.length === 1 && runs[0].meta?.photos === 1 && runs[0].meta?.candidates === 1 && runs[0].meta?.files === 3 && Object.keys(runs[0].meta ?? {}).length === 3, runs.map((x) => x.meta));
+    const again = await runPurge({ dryRun: false, tenantId: P.tenant.id, now: nowP });
+    check("running again deletes nothing more (idempotent)", again[0].candidates === 0 && again[0].photos === 0, again);
   } finally {
     await cleanup(created, root);
     const left = created.length ? await db.$count(s.tenants, inArray(s.tenants.id, created)) : 0;

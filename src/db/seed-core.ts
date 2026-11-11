@@ -1,7 +1,7 @@
-// Idempotent: safe to run again; existing rows are left as they are.
-// Run with `npm run db:seed` (loads .env if present).
+// Idempotent seed: safe to run again; existing rows are left as they are.
+// Used by `npm run db:seed` (src/db/seed.ts) and, with SEED_ON_START=1, by the server at start-up.
 import { and, eq } from "drizzle-orm";
-import { db, pgClient } from "@/db";
+import { db } from "@/db";
 import { jobs, locations, rejectReasons, stages, tenants, users } from "@/db/schema";
 import { REJECT_REASONS, SAMPLE_CRITERIA } from "@/lib/options";
 import { audit, createStaff } from "@/lib/staff";
@@ -34,7 +34,7 @@ const JOBS = [
 ];
 const SAMPLE_LOCATION = "Main office (sample, rename me)";
 
-async function main() {
+export async function seed() {
   await db.insert(tenants).values(TENANT).onConflictDoNothing({ target: tenants.slug });
   const tenant = await db.query.tenants.findFirst({ where: eq(tenants.slug, TENANT.slug) });
   if (!tenant) throw new Error("tenant upsert failed");
@@ -106,9 +106,3 @@ async function main() {
   console.log(`tenant "${tenant.slug}": stages=${counts[0]} jobs=${counts[1]} locations=${counts[2]} users=${counts[3]} reject_reasons=${counts[4]}`);
 }
 
-main()
-  .catch((e) => {
-    console.error(e instanceof Error ? e.message : e);
-    process.exitCode = 1;
-  })
-  .finally(() => pgClient.end());
