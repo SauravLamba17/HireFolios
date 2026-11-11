@@ -5,6 +5,7 @@ import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { jobs, outcomeEnum } from "@/db/schema";
 import { StatusBadge, Tag } from "@/components/status-badge";
+import { StatusCard } from "@/components/status-card";
 import { PAGE_SIZE, parseFilters, searchCandidates, type Filters } from "@/lib/candidate-search";
 import { formatDayIST } from "@/lib/ist";
 import { formatLpa } from "@/lib/money";
@@ -61,10 +62,20 @@ export default async function DashboardPage({ searchParams }: Props) {
             </p>
           )}
         </div>
-        {can(staff.role, "intake") && (
-          <Link href="/intake" className="btn btn-primary">+ New candidate</Link>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {can(staff.role, "export") && total > 0 && (
+            // a plain link: the browser downloads the .xlsx with the same filters as this list
+            <a href={`/api/exports/candidates${hrefWith(f, { page: 1 }).replace("/dashboard", "")}`} className="btn btn-secondary">
+              Export to Excel
+            </a>
+          )}
+          {can(staff.role, "intake") && (
+            <Link href="/intake" className="btn btn-primary">+ New candidate</Link>
+          )}
+        </div>
       </div>
+
+      {can(staff.role, "settings") && <StatusCard tenantId={staff.tenantId} />}
 
       <form method="get" action="/dashboard" className="card grid gap-4 md:grid-cols-4" role="search" aria-label="Search candidates">
         <div className="md:col-span-4">
