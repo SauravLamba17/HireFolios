@@ -161,7 +161,7 @@ export function UsersManager({ users, roles, currentUserId }: { users: Row[]; ro
       )}
 
       <section className="card overflow-x-auto p-0" aria-label="Staff list">
-        <table className="w-full min-w-[760px] text-left">
+        <table className="w-full min-w-[960px] text-left">
           <thead className="border-b border-slate-200 bg-slate-50 text-sm text-slate-600">
             <tr>
               <th scope="col" className="px-4 py-3 font-medium">Staff</th>
@@ -230,6 +230,19 @@ export function UsersManager({ users, roles, currentUserId }: { users: Row[]; ro
                         }}
                       >
                         Reset password
+                      </button>
+                    )}
+                    {!self && u.active && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className="btn btn-secondary mr-2"
+                        onClick={() => {
+                          if (!confirm(`Sign ${u.name} out on every device now?`)) return;
+                          run(() => send(`/api/users/${u.id}`, "PATCH", { signOut: true }), `${u.name} is signed out everywhere.`);
+                        }}
+                      >
+                        Sign out everywhere
                       </button>
                     )}
                     {!self && (

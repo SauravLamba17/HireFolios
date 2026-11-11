@@ -7,6 +7,7 @@ import * as schema from "@/db/schema";
 import { brand } from "@/lib/brand";
 import { requestOrigin } from "@/lib/origin";
 import { audit } from "@/lib/staff";
+import { SESSION_SECONDS, sessionSeconds } from "@/lib/session-length";
 
 // Self-hosted email + password. No public sign-up: admins create staff (see src/lib/staff.ts).
 // Secret, base URL and extra trusted origins come from BETTER_AUTH_* env vars.
@@ -15,7 +16,9 @@ export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg", schema, usePlural: true }),
   emailAndPassword: { enabled: true, disableSignUp: true, minPasswordLength: 8 },
   session: {
-    expiresIn: 60 * 60 * 12, // one 12-hour shift, then sign in again
+    // The cookie may live as long as the longest session (the lobby TV); each session row gets its
+    // own expiry below (sessionSeconds), so staff still sign in every 12 hours.
+    expiresIn: SESSION_SECONDS.display,
     disableSessionRefresh: true,
   },
   user: {
@@ -50,12 +53,13 @@ export const auth = betterAuth({
       create: {
         before: async (session) => {
           const u = await db.query.users.findFirst({
-            columns: { active: true },
+            columns: { active: true, role: true },
             where: eq(schema.users.id, session.userId),
           });
           if (!u?.active) {
             throw new APIError("FORBIDDEN", { message: "This account is deactivated." });
           }
+          return { data: { ...session, expiresAt: new Date(Date.now() + sessionSeconds(u.role) * 1000) } };
         },
       },
     },

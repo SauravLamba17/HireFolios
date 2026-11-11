@@ -6,8 +6,8 @@ import { requireStaffApi } from "@/lib/session";
 import { audit } from "@/lib/staff";
 
 const UpdateStaff = z
-  .object({ role: z.enum(roleEnum.enumValues, "Choose a role").optional(), active: z.boolean().optional() })
-  .refine((v) => v.role !== undefined || v.active !== undefined, "Nothing to change");
+  .object({ role: z.enum(roleEnum.enumValues, "Choose a role").optional(), active: z.boolean().optional(), signOut: z.literal(true).optional() })
+  .refine((v) => v.role !== undefined || v.active !== undefined || v.signOut, "Nothing to change");
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { staff, error } = await requireStaffApi(req, "users");
@@ -29,6 +29,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (role !== undefined && role !== target.role) {
       await tx.update(users).set({ role }).where(sameTenant);
       await audit(tx, { ...base, action: "user.role_change", meta: { from: target.role, to: role } });
+    }
+    if (parsed.data.signOut) {
+      // e.g. the lobby TV's 30-day session: ends it on every device now
+      await tx.delete(sessions).where(eq(sessions.userId, id));
+      await audit(tx, { ...base, action: "user.sign_out" });
     }
     if (active !== undefined && active !== target.active) {
       await tx.update(users).set({ active }).where(sameTenant);
