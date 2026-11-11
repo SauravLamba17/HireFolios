@@ -26,3 +26,7 @@ next-env.d.ts
 .DS_Store
 *.pem
 npm-debug.log*
+
+# release builds (npm run package) and downloaded tools
+/release/
+/.cache/

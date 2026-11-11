@@ -17,7 +17,8 @@
     "db:seed": "tsx --conditions=react-server --env-file-if-exists=.env src/db/seed.ts",
     "postbuild": "node -e \"const fs=require('fs'),d=process.env.NEXT_DIST_DIR||'.next';fs.cpSync(d+'/static',d+'/standalone/'+d+'/static',{recursive:true});if(fs.existsSync('public'))fs.cpSync('public',d+'/standalone/public',{recursive:true})\"",
     "dev:check": "node scripts/dev-check.mjs",
-    "smoke": "tsx --conditions=react-server --env-file-if-exists=.env scripts/smoke.ts"
+    "smoke": "tsx --conditions=react-server --env-file-if-exists=.env scripts/smoke.ts",
+    "package": "node scripts/package.mjs"
   },
   "dependencies": {
     "better-auth": "^1.7.19",

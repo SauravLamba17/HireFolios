@@ -18,6 +18,8 @@ const eslintConfig = [
       ".next-*/**", // builds with NEXT_DIST_DIR
       "out/**",
       "build/**",
+      "release/**", // npm run package
+      ".cache/**",
       "next-env.d.ts",
     ],
   },
