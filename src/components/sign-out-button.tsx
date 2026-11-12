@@ -3,13 +3,16 @@
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 
-export function SignOutButton() {
+/** Sign out; `asMenuItem` renders it as an item of the user menu. */
+export function SignOutButton({ asMenuItem = false, className = "btn btn-secondary" }: { asMenuItem?: boolean; className?: string }) {
   const [pending, setPending] = useState(false);
   return (
     <button
       type="button"
       disabled={pending}
-      className="btn btn-secondary"
+      role={asMenuItem ? "menuitem" : undefined}
+      tabIndex={asMenuItem ? -1 : undefined}
+      className={className}
       onClick={async () => {
         setPending(true);
         await authClient.signOut().catch(() => {});

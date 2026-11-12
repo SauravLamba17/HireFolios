@@ -31,7 +31,9 @@ test("signed-out visitors are sent to /login", async ({ page }) => {
 test("admin adds an HR user", async ({ page }) => {
   await signIn(page, admin);
   await expect(page).toHaveURL(/\/dashboard$/);
-  await page.getByRole("link", { name: "Staff", exact: true }).click();
+  // Staff lives in the header's Admin menu
+  await page.getByRole("button", { name: "Admin", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Staff", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Staff accounts" })).toBeVisible();
 
   await page.getByLabel("Full name").fill(hr.name);
@@ -43,7 +45,8 @@ test("admin adds an HR user", async ({ page }) => {
   await expect(page.getByRole("row").filter({ hasText: hr.email })).toBeVisible();
 
   await shoot(page, "users");
-  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await page.getByRole("button", { name: /account menu/ }).click();
+  await page.getByRole("menuitem", { name: "Sign out", exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
 });
 
@@ -56,6 +59,11 @@ test("HR is blocked from the users page", async ({ page }) => {
   await page.getByLabel("Repeat new password").fill(`${hr.password}-new`);
   await page.getByRole("button", { name: "Change password" }).click();
   await expect(page).toHaveURL(/\/intake$/);
+  // HR gets a "More" menu without Staff, and no Admin menu at all
+  await expect(page.getByRole("button", { name: "Admin", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Reports" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Staff", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Staff", exact: true })).toHaveCount(0);
 
   await page.goto("/dashboard/users");

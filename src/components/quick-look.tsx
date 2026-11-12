@@ -1,7 +1,8 @@
 "use client";
 
 // Header quick-look (HR, manager, admin): type 2+ letters of a name or 4+ digits of a mobile. "/" focuses it,
-// ↑ ↓ move, Enter opens the profile, Esc closes. ARIA combobox + listbox.
+// ↑ ↓ move, Enter opens the profile, Esc closes. ARIA combobox + listbox. Below 1280 px wide the box folds into a
+// search button (the header stays on one row); the button or "/" opens it.
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
 import { formatDayIST } from "@/lib/ist";
@@ -16,6 +17,11 @@ export function QuickLook() {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [expanded, setExpanded] = useState(false); // narrow screens: the box is open
+  const reveal = () => {
+    setExpanded(true);
+    requestAnimationFrame(() => input.current?.focus());
+  };
 
   // "/" anywhere (not while typing in a field) focuses the box
   useEffect(() => {
@@ -23,7 +29,7 @@ export function QuickLook() {
       const t = e.target as HTMLElement;
       if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]")) return;
       e.preventDefault();
-      input.current?.focus();
+      reveal();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -69,7 +75,27 @@ export function QuickLook() {
   const showList = open && q.trim() !== "" && state !== "idle";
 
   return (
-    <div className="relative w-full max-w-sm min-w-56 flex-1">
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => (expanded ? setExpanded(false) : reveal())}
+        aria-label="Quick look: find a person (/)"
+        aria-expanded={expanded}
+        title="Find a person — name or mobile ( / )"
+        className={`grid h-12 w-12 place-items-center rounded-lg text-slate-700 hover:bg-slate-100 xl:hidden ${expanded ? "bg-blue-50 text-blue-800" : ""}`}
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-4-4" />
+        </svg>
+      </button>
+      <div
+        className={
+          expanded
+            ? "absolute top-full right-0 z-40 mt-2 w-[min(28rem,92vw)] rounded-lg border border-slate-200 bg-white p-2 shadow-lg xl:static xl:mt-0 xl:w-56 xl:border-0 xl:p-0 xl:shadow-none"
+            : "hidden xl:block xl:w-56"
+        }
+      >
       <label htmlFor={`${id}-in`} className="sr-only">Quick look: name or mobile</label>
       <input
         ref={input}
@@ -80,7 +106,8 @@ export function QuickLook() {
         aria-controls={listId}
         aria-autocomplete="list"
         aria-activedescendant={showList && active >= 0 ? optId(active) : undefined}
-        placeholder="Find a person — name or mobile ( / )"
+        placeholder="Find a person ( / )"
+        title="Find a person — name or mobile ( / )"
         autoComplete="off"
         value={q}
         onChange={(e) => {
@@ -88,7 +115,12 @@ export function QuickLook() {
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onBlur={() =>
+          setTimeout(() => {
+            setOpen(false);
+            setExpanded(false);
+          }, 150)
+        }
         onKeyDown={(e) => {
           if (e.key === "ArrowDown") {
             e.preventDefault();
@@ -102,7 +134,10 @@ export function QuickLook() {
             if (rows[active]) go(rows[active]);
           } else if (e.key === "Escape") {
             setOpen(false);
-            if (!open) setQ("");
+            if (!open) {
+              setQ("");
+              setExpanded(false);
+            }
           }
         }}
         className="input h-11"
@@ -154,6 +189,7 @@ export function QuickLook() {
           ))}
         </ul>
       )}
+      </div>
     </div>
   );
 }

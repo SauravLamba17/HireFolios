@@ -2,19 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { isActive, type MenuLink } from "./nav-menu";
 
-export function NavLinks({ links }: { links: { href: string; label: string; also?: string | string[] }[] }) {
+/** The header's always-visible links (the role's most used pages). */
+export function NavLinks({ links }: { links: MenuLink[] }) {
   const path = usePathname();
   return (
-    <nav className="flex flex-wrap items-center gap-1">
+    <>
       {links.map((l) => {
-        const active = path === l.href || [l.also ?? []].flat().some((p) => path.startsWith(p));
+        const active = isActive(path, l);
         return (
           <Link
             key={l.href}
             href={l.href}
             aria-current={active ? "page" : undefined}
-            className={`flex h-12 items-center rounded-lg px-4 text-base font-medium ${
+            className={`flex h-12 items-center rounded-lg px-3 text-base font-medium whitespace-nowrap ${
               active ? "bg-blue-50 text-blue-800" : "text-slate-700 hover:bg-slate-100"
             }`}
           >
@@ -22,6 +24,6 @@ export function NavLinks({ links }: { links: { href: string; label: string; also
           </Link>
         );
       })}
-    </nav>
+    </>
   );
 }

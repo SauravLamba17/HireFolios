@@ -439,8 +439,7 @@ Phase 3 (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is 
 - **Simplen must confirm before relying on it:** Settings → Rediscovery (every value is "Sample"), Settings → Lists → Reject
   categories (and which are skill reasons) and Rediscovery tags, the category of each reject reason, the six WhatsApp messages
   (Hindi by a native speaker). Defaults and texts: docs/REDISCOVERY.md.
-- The header now wraps to two rows at 1366 for HR and three at 1024 for admins (quick-look box + more links); left for the
-  planned design pass.
+- ~~The header now wraps to two rows at 1366 for HR and three at 1024 for admins.~~ Fixed below (one-row header).
 - At 10,000 candidates PostgreSQL scans `candidates` instead of using the trigram indexes (faster at that size); they are used
   on larger tables. The suggestions page looks at the 300 most recent decisions (comment in the code).
 - Risk hints are saved with an offer from Phase 3.6 on; earlier offers have none, so "hints vs outcome" starts empty.
@@ -451,7 +450,41 @@ Phase 3 (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is 
 - Still open from earlier phases: office-PC-only checks (reboot, LAN, real webcam), `npm audit` items in build tools, staff
   emails unique across tenants, in-memory sign-in rate limit, `update-user` rename, in-process live-update bus.
 
-## Phase 4 — next
+## Fix — one-row header with grouped menus ✅ (2026-11-13)
+
+- [x] Header on **one row** at 1440, 1366x768 and 1024 for admin, HR, manager and interviewer (checked by `e2e/header.spec.ts`:
+      row height, every item on one band, no overlaps, no sideways scroll), with the longest company short name (30 characters)
+      and a 60-character staff name
+- [x] Each role keeps its most used links visible; the rest moved into menus (nothing removed, permissions unchanged):
+
+| Role | Visible links | Rediscovery ▾ | Second menu |
+|---|---|---|---|
+| Admin | Candidates · + New candidate · Drive | Pool · Bulk hiring · Hiring pushes · Suggestions · Call-backs · Joining soon | **Admin ▾**: Interview · Reports · Privacy · Settings · Staff · Audit |
+| HR | + New candidate · Drive · Candidates | same six | **More ▾**: Reports · Privacy |
+| Manager | Candidates · Drive · Reports | same six | **More ▾**: Interview |
+| Interviewer | Interview | — | — |
+
+- [x] Rediscovery pages keep their own tab bar too; "Pushes" is called "Hiring pushes" in the menu
+- [x] Quick-look: a box from 1280 px wide, a search button below that (click or "/" opens the box; Esc folds it)
+- [x] Right side: company logo + short name (truncated, full name on hover), then the account menu (name · role, truncated with
+      the full text on hover) holding **Change password** and **Sign out** (both moved from the header row into this menu)
+- [x] Menus (`src/components/nav-menu.tsx`): button with `aria-haspopup` / `aria-expanded`; Enter, Space or ↓ opens on the first
+      item, ↑ on the last; ↑ ↓ Home End move (wrapping); Esc closes and returns focus; Tab, focus leaving or a click outside
+      closes; one menu open at a time; the menu button lights up on its pages; menus close after navigating
+- [x] Tests updated, not weakened: `staff.spec` opens Admin ▾ → Staff and the account menu → Sign out; the HR check now also
+      asserts there is no Admin menu and no Staff item in More ▾
+- [x] Verified: tsc, lint, vitest 212/212, `npm run dev:check` 24 pages, Playwright full suite **45 passed, 1 skipped** (LAN) in
+      Chrome on the production build; `header.spec` + `browsers.spec` 11/11 in Edge
+
+### Issues found while testing (logged before fixing; re-tested)
+
+| # | Issue | Severity | Fix |
+|---|---|---|---|
+| 1 | Overlap check flagged the right-hand group against its own children | none (test) | check compares leaf items only and names the overlapping pair |
+| 2 | A 60-character staff name showed in full when there was room (interviewer), taking ~400 px | minor | name capped at 9–12 rem, truncated, full name on hover |
+| 3 | `Admin` button selector also matched the account menu of an admin ("…, Admin: account menu") | none (test) | exact names |
+| 4 | Tab pressed on a just-opened menu's button (before focus reached the first item) left the menu open | minor (a11y) | menu closes whenever focus leaves the button and its items |
+
 
 Manual entry by HR stays available at every step (CLAUDE.md hard rule 13; `e2e/manual-intake.spec.ts` must keep passing).
 Everything below is an optional helper on top of it.
