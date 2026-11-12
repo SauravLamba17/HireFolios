@@ -30,6 +30,10 @@ export type DetailsState = {
   voiceProcess: boolean | null;
   typingWpm: string;
   skills: string;
+  // "More details" (optional): another company's offer in hand
+  otherCompany: string;
+  otherCtcLpa: string;
+  otherJoining: string;
 };
 
 export const emptyDetails = (): DetailsState => ({
@@ -54,6 +58,9 @@ export const emptyDetails = (): DetailsState => ({
   voiceProcess: null,
   typingWpm: "",
   skills: "",
+  otherCompany: "",
+  otherCtcLpa: "",
+  otherJoining: "",
 });
 
 const str = (v: string | number | null) => (v === null ? "" : String(v));
@@ -92,8 +99,11 @@ const reqNum = (v: string) => (v.trim() === "" ? undefined : Number(v));
 
 /** Shape the shared zod schema expects. Wrong values are left for the schema to report. */
 export function toDetailsInput(d: DetailsState): IntakeDetailsInput {
+  const { otherCompany, otherCtcLpa, otherJoining, ...rest } = d;
+  const hasOffer = otherCompany.trim() !== "" || otherCtcLpa.trim() !== "" || otherJoining !== "";
   return {
-    ...d,
+    ...rest,
+    otherOffer: hasOffer ? { company: otherCompany, offeredCtcLpa: optNum(otherCtcLpa), joiningDate: otherJoining || null } : null,
     experienceYears: reqNum(d.experienceYears) as number,
     experienceMonths: reqNum(d.experienceMonths) as number,
     currentCtcLpa: optNum(d.currentCtcLpa),
@@ -297,6 +307,24 @@ export function DetailsForm({
           <textarea {...input("skills")} rows={2} maxLength={500} className="input h-auto py-2" />
         </Field>
       </section>
+
+      <details className="rounded-lg border border-slate-200 p-4" data-testid="more-details" open={Object.keys(errors).some((k) => k.startsWith("otherOffer")) || undefined}>
+        <summary className="cursor-pointer text-lg font-semibold">More details (optional)</summary>
+        <div className="mt-4 space-y-3">
+          <p className="text-sm text-slate-600">Another offer the candidate already has. Only HR sees this. Leave empty to skip.</p>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field id="otherCompany" label="Other offer: company" error={errors["otherOffer.company"]}>
+              <input {...input("otherCompany")} autoComplete="off" maxLength={100} className="input" />
+            </Field>
+            <Field id="otherCtcLpa" label="Offered CTC (LPA)" error={errors["otherOffer.offeredCtcLpa"]}>
+              <input {...input("otherCtcLpa")} type="number" inputMode="decimal" min={0} max={100} step={0.01} className="input" />
+            </Field>
+            <Field id="otherJoining" label="Their joining date" error={errors["otherOffer.joiningDate"]}>
+              <input {...input("otherJoining")} type="date" className="input" />
+            </Field>
+          </div>
+        </div>
+      </details>
 
       <section aria-labelledby="hr-h" className="space-y-2">
         <h2 id="hr-h" className="text-lg font-semibold">HR notes</h2>

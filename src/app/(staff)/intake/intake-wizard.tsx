@@ -245,7 +245,7 @@ export function IntakeWizard({
       return goTo("consent");
     }
     const errs: Record<string, string> = {};
-    for (const i of parsed.error.issues) errs[String(i.path[0])] ??= i.message;
+    for (const i of parsed.error.issues) errs[i.path[0] === "otherOffer" ? i.path.join(".") : String(i.path[0])] ??= i.message;
     setErrors(errs);
     requestAnimationFrame(() => document.querySelector("[aria-invalid=true], .text-red-700")?.scrollIntoView({ block: "center" }));
   }

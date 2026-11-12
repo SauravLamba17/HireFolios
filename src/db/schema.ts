@@ -104,6 +104,8 @@ export const optionListEnum = pgEnum("option_list", [
   "notice_period",
   "source",
   "language",
+  "reject_category", // Phase 3.6: why we did not hire (code + kind skill / non_skill / neutral)
+  "rediscovery_tag", // Phase 3.6: tags for strong people not hired (code)
 ]);
 export const optionItems = pgTable(
   "option_items",
@@ -117,9 +119,13 @@ export const optionItems = pgTable(
     position: integer("position").notNull(),
     sample: boolean("sample").notNull().default(false),
     createdAt: createdAt(),
+    // Stable key the rules use (`cost`, `do_not_rehire`, ...); renaming the label keeps the rules working.
+    code: text("code"),
+    kind: text("kind"), // reject_category only: skill | non_skill | neutral
   },
   (t) => [
     uniqueIndex("option_items_tenant_list_label_uq").on(t.tenantId, t.list, t.label),
+    uniqueIndex("option_items_tenant_list_code_uq").on(t.tenantId, t.list, t.code).where(sql`code is not null`),
     index("option_items_tenant_list_idx").on(t.tenantId, t.list, t.position),
   ],
 );
@@ -346,6 +352,7 @@ export const rejectReasons = pgTable(
     active: boolean("active").notNull().default(true),
     sample: boolean("sample").notNull().default(false),
     createdAt: createdAt(),
+    categoryCode: text("category_code"), // reject_category item code (Phase 3.6)
   },
   (t) => [unique("reject_reasons_tenant_label_uq").on(t.tenantId, t.label)],
 );
@@ -384,6 +391,7 @@ export const candidates = pgTable(
   (t) => [
     unique("candidates_tenant_mobile_uq").on(t.tenantId, t.mobile),
     index("candidates_full_name_trgm_idx").using("gin", t.fullName.op("gin_trgm_ops")),
+    index("candidates_mobile_trgm_idx").using("gin", t.mobile.op("gin_trgm_ops")), // quick-look: 4+ digits of a mobile
     index("candidates_search_fts_idx").using("gin", sql`to_tsvector('simple', ${t.searchText})`),
     check("candidates_typing_wpm_ck", sql`${t.typingWpm} is null or ${t.typingWpm} between 1 and 250`),
     check("candidates_mobile_ck", sql`${t.mobile} ~ '^[6-9][0-9]{9}$'`),
@@ -431,6 +439,12 @@ export const applications = pgTable(
     createdBy: text("created_by").references(() => users.id),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
+    // Phase 3.6: why we did not hire (reject_category code) and the figures of a cost decision (rupees per year;
+    // budget = offered CTC for a declined offer). Joining-risk hint codes saved when the offer was recorded.
+    rejectCategory: text("reject_category"),
+    costExpectedCtc: integer("cost_expected_ctc"),
+    costBudgetCtc: integer("cost_budget_ctc"),
+    riskHints: text("risk_hints").array(),
   },
   (t) => [
     unique("applications_tenant_client_request_uq").on(t.tenantId, t.clientRequestId),
@@ -556,6 +570,9 @@ export const consents = pgTable(
     deviceId: uuid("device_id").references(() => devices.id),
     recordedBy: text("recorded_by").references(() => users.id),
     withdrawnAt: ts("withdrawn_at"),
+    // Consent recorded after the visit (Phase 3.6): in_person | whatsapp | phone | email. Null = given at intake.
+    channel: text("channel"),
+    note: text("note"),
   },
   (t) => [index("consents_candidate_idx").on(t.candidateId)],
 );
@@ -616,4 +633,173 @@ export const dataExports = pgTable(
     expiresAt: ts("expires_at"),
   },
   (t) => [index("exports_tenant_created_idx").on(t.tenantId, t.createdAt)],
+);
+
+// ---- Phase 3.6: candidate 360 + rediscovery (docs/REDISCOVERY.md). HR-only data. ----
+// New tables cascade with their tenant and candidate (the deletion job and clean-ups remove them with the candidate);
+// staff references are set null (staff are deactivated, never deleted, in normal use).
+const tenantRef = () =>
+  uuid("tenant_id")
+    .notNull()
+    .references(() => tenants.id, { onDelete: "cascade" });
+const candidateRef = () =>
+  uuid("candidate_id")
+    .notNull()
+    .references(() => candidates.id, { onDelete: "cascade" });
+const staffRef = (name: string) => text(name).references(() => users.id, { onDelete: "set null" });
+
+// Per-tenant settings (Settings → Rediscovery): key → JSON value, checked by src/lib/rediscovery/settings.ts.
+export const tenantSettings = pgTable(
+  "tenant_settings",
+  {
+    tenantId: tenantRef(),
+    key: text("key").notNull(),
+    value: jsonb("value").notNull(),
+    sample: boolean("sample").notNull().default(true),
+    updatedBy: staffRef("updated_by"),
+    updatedAt: updatedAt(),
+  },
+  (t) => [primaryKey({ columns: [t.tenantId, t.key] })],
+);
+
+export const otherOffers = pgTable(
+  "other_offers",
+  {
+    id: id(),
+    tenantId: tenantRef(),
+    candidateId: candidateRef(),
+    company: text("company"),
+    offeredCtc: integer("offered_ctc"),
+    joiningDate: date("joining_date", { mode: "string" }),
+    notedOn: date("noted_on", { mode: "string" }).notNull(),
+    createdBy: staffRef("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("other_offers_candidate_idx").on(t.candidateId), check("other_offers_ctc_ck", sql`coalesce(${t.offeredCtc}, 0) >= 0`)],
+);
+
+export const candidateTags = pgTable(
+  "candidate_tags",
+  {
+    id: id(),
+    tenantId: tenantRef(),
+    candidateId: candidateRef(),
+    tagCode: text("tag_code").notNull(),
+    note: text("note"),
+    source: text("source").notNull(), // manual | suggestion
+    addedBy: staffRef("added_by"),
+    addedAt: ts("added_at").notNull().defaultNow(),
+    removedAt: ts("removed_at"),
+    removedBy: staffRef("removed_by"),
+    removeNote: text("remove_note"),
+  },
+  (t) => [
+    index("candidate_tags_tenant_tag_idx").on(t.tenantId, t.tagCode),
+    index("candidate_tags_candidate_idx").on(t.candidateId),
+    uniqueIndex("candidate_tags_one_active_uq").on(t.candidateId, t.tagCode).where(sql`removed_at is null`),
+  ],
+);
+
+// A dismissed suggestion, remembered for one decision (visit + decision time): it returns only after a new decision.
+export const suggestionDismissals = pgTable(
+  "suggestion_dismissals",
+  {
+    id: id(),
+    tenantId: tenantRef(),
+    candidateId: candidateRef(),
+    tagCode: text("tag_code").notNull(),
+    applicationId: uuid("application_id")
+      .notNull()
+      .references(() => applications.id, { onDelete: "cascade" }),
+    decidedAt: ts("decided_at").notNull(),
+    note: text("note"),
+    dismissedBy: staffRef("dismissed_by"),
+    dismissedAt: ts("dismissed_at").notNull().defaultNow(),
+  },
+  (t) => [index("suggestion_dismissals_candidate_idx").on(t.candidateId)],
+);
+
+export const hiringPushes = pgTable(
+  "hiring_pushes",
+  {
+    id: id(),
+    tenantId: tenantRef(),
+    name: text("name").notNull(),
+    criteria: jsonb("criteria").notNull(),
+    createdBy: staffRef("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("hiring_pushes_tenant_idx").on(t.tenantId, t.createdAt)],
+);
+
+export const pushMembers = pgTable(
+  "push_members",
+  {
+    id: id(),
+    tenantId: tenantRef(),
+    pushId: uuid("push_id")
+      .notNull()
+      .references(() => hiringPushes.id, { onDelete: "cascade" }),
+    candidateId: candidateRef(),
+    status: text("status").notNull().default("to_call"), // to_call | no_answer | interested | not_interested | booked | hired
+    rank: integer("rank").notNull(),
+    score: integer("score").notNull(),
+    why: text("why").notNull(),
+    updatedBy: staffRef("updated_by"),
+    updatedAt: updatedAt(),
+  },
+  (t) => [unique("push_members_push_candidate_uq").on(t.pushId, t.candidateId), index("push_members_candidate_idx").on(t.candidateId)],
+);
+
+export const contactLog = pgTable(
+  "contact_log",
+  {
+    id: id(),
+    tenantId: tenantRef(),
+    candidateId: candidateRef(),
+    channel: text("channel").notNull(), // call | whatsapp | other
+    purpose: text("purpose").notNull(), // callback | bulk_push | consent | other
+    outcome: text("outcome"), // no_answer | interested | not_interested | call_later | wrong_number
+    note: text("note"),
+    pushId: uuid("push_id").references(() => hiringPushes.id, { onDelete: "set null" }),
+    contactedBy: staffRef("contacted_by"),
+    contactedAt: ts("contacted_at").notNull().defaultNow(),
+  },
+  (t) => [index("contact_log_candidate_idx").on(t.candidateId, t.contactedAt), index("contact_log_tenant_idx").on(t.tenantId, t.contactedAt)],
+);
+
+// The candidate asked not to be contacted. Active while cleared_at is null; only an admin clears it, with a note.
+export const doNotContact = pgTable(
+  "do_not_contact",
+  {
+    id: id(),
+    tenantId: tenantRef(),
+    candidateId: candidateRef(),
+    reason: text("reason").notNull(),
+    setBy: staffRef("set_by"),
+    setAt: ts("set_at").notNull().defaultNow(),
+    clearedAt: ts("cleared_at"),
+    clearedBy: staffRef("cleared_by"),
+    clearNote: text("clear_note"),
+  },
+  (t) => [uniqueIndex("do_not_contact_one_active_uq").on(t.candidateId).where(sql`cleared_at is null`), index("do_not_contact_tenant_idx").on(t.tenantId)],
+);
+
+export const callbacks = pgTable(
+  "callbacks",
+  {
+    id: id(),
+    tenantId: tenantRef(),
+    candidateId: candidateRef(),
+    applicationId: uuid("application_id").references(() => applications.id, { onDelete: "set null" }),
+    dueOn: date("due_on", { mode: "string" }).notNull(), // IST calendar day
+    note: text("note"),
+    status: text("status").notNull().default("open"), // open | done
+    outcome: text("outcome"),
+    createdBy: staffRef("created_by"),
+    createdAt: createdAt(),
+    doneBy: staffRef("done_by"),
+    doneAt: ts("done_at"),
+  },
+  (t) => [index("callbacks_tenant_due_idx").on(t.tenantId, t.status, t.dueOn), index("callbacks_candidate_idx").on(t.candidateId)],
 );

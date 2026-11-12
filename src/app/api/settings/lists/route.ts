@@ -7,15 +7,17 @@ import { FlowError, NotFoundError } from "@/lib/flow";
 import { firstIssue } from "@/lib/intake";
 import { LIST_KEYS } from "@/lib/lists";
 import { ensureListDefaults, listRows } from "@/lib/lists-db";
+import { CATEGORY_KINDS, newItemCode, SYSTEM_TAGS } from "@/lib/rediscovery/categories";
 import { requireStaffApi } from "@/lib/session";
 import { audit } from "@/lib/staff";
 
 const list = z.enum(LIST_KEYS, "Unknown list");
 const label = z.string("Enter a name").trim().min(1, "Enter a name").max(100, "Name is too long (100 characters max)");
 const itemId = z.string().refine(isUuid, "Item not found");
+const kind = z.enum(Object.keys(CATEGORY_KINDS) as [string, ...string[]], "Choose the kind").optional(); // reject categories only
 const Action = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("create"), list, label, days: z.int("Days must be a whole number").min(0).max(365).nullable().optional() }),
-  z.object({ action: z.literal("update"), list, itemId, label, active: z.boolean() }),
+  z.object({ action: z.literal("create"), list, label, days: z.int("Days must be a whole number").min(0).max(365).nullable().optional(), kind }),
+  z.object({ action: z.literal("update"), list, itemId, label, active: z.boolean(), kind }),
   z.object({ action: z.literal("move"), list, itemId, direction: z.enum(["up", "down"]) }),
 ]);
 
@@ -30,6 +32,9 @@ export async function POST(req: Request) {
   const tenantId = staff.tenantId;
   if (a.action === "create" && a.list === "notice_period" && (a.days === null || a.days === undefined)) return badRequest("Enter the number of days for a notice period.");
   if (a.action === "create" && a.list !== "notice_period" && a.days !== null && a.days !== undefined) return badRequest("Only notice periods have days.");
+  if (a.action !== "move" && a.kind && a.list !== "reject_category") return badRequest("Only reject categories have a kind.");
+  // Rediscovery lists: rules work on stable codes, so every item gets one; categories also need a kind.
+  const coded = a.list === "reject_category" || a.list === "rediscovery_tag";
   await ensureListDefaults(tenantId);
   return act(
     staff,
@@ -45,15 +50,31 @@ export async function POST(req: Request) {
         const [{ top }] = await tx.select({ top: max(optionItems.position) }).from(optionItems).where(and(eq(optionItems.tenantId, tenantId), eq(optionItems.list, a.list)));
         const [row] = await tx
           .insert(optionItems)
-          .values({ tenantId, list: a.list, label: a.label, days: a.list === "notice_period" ? a.days! : null, position: (top ?? 0) + 1 })
+          .values({
+            tenantId,
+            list: a.list,
+            label: a.label,
+            days: a.list === "notice_period" ? a.days! : null,
+            position: (top ?? 0) + 1,
+            code: coded ? newItemCode() : null,
+            kind: a.list === "reject_category" ? (a.kind ?? "neutral") : null,
+          })
           .returning({ id: optionItems.id });
         await audit(tx, { tenantId, actorUserId: staff.id, action: "option_item.create", entityType: "option_item", entityId: row.id, meta: { list: a.list } });
         return;
       }
       if (a.action === "update") {
+        const [cur] = await tx
+          .select({ code: optionItems.code })
+          .from(optionItems)
+          .where(and(eq(optionItems.id, a.itemId), eq(optionItems.tenantId, tenantId), eq(optionItems.list, a.list)));
+        if (!cur) throw new NotFoundError("Item not found");
+        if (a.list === "rediscovery_tag" && !a.active && cur.code && SYSTEM_TAGS.includes(cur.code)) {
+          throw new FlowError("This tag is used by the rediscovery rules: rename it if you like, but it can't be retired.");
+        }
         const [row] = await tx
           .update(optionItems)
-          .set({ label: a.label, active: a.active, sample: false })
+          .set({ label: a.label, active: a.active, sample: false, ...(a.list === "reject_category" && a.kind ? { kind: a.kind } : {}) })
           .where(and(eq(optionItems.id, a.itemId), eq(optionItems.tenantId, tenantId), eq(optionItems.list, a.list)))
           .returning({ id: optionItems.id });
         if (!row) throw new NotFoundError("Item not found");

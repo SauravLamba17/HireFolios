@@ -3,7 +3,11 @@ import { isUuid } from "@/db";
 import { act, badRequest } from "@/lib/api";
 import { decide, setMyStatus } from "@/lib/drive";
 import { firstIssue } from "@/lib/intake";
+import { lpaToRupees } from "@/lib/money";
 import { requireStaffApi } from "@/lib/session";
+
+// Cost figures of a cost rejection (optional), LPA from the form.
+const lpa = z.number("Enter the amount in LPA").min(0, "CTC cannot be negative").max(100, "CTC looks too high (LPA = lakh per year)").nullable().optional();
 
 const Action = z.discriminatedUnion("action", [
   z.object({ action: z.literal("status"), status: z.enum(["available", "away"]) }),
@@ -18,6 +22,8 @@ const Action = z.discriminatedUnion("action", [
       .transform((v) => v || null),
     decision: z.enum(["pass", "hold", "reject"], "Choose Pass, Hold or Reject"),
     rejectReason: z.string().trim().max(200).nullable(),
+    costExpectedLpa: lpa,
+    costBudgetLpa: lpa,
   }),
 ]);
 
@@ -28,5 +34,7 @@ export async function POST(req: Request) {
   const parsed = Action.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return badRequest(firstIssue(parsed.error));
   const a = parsed.data;
-  return act(staff, async (tx): Promise<unknown> => (a.action === "status" ? setMyStatus(tx, staff, a.status) : decide(tx, staff, a)));
+  return act(staff, async (tx): Promise<unknown> => (a.action === "status" ? setMyStatus(tx, staff, a.status) : decide(tx, staff, { ...a, costExpected: rupees(a.costExpectedLpa), costBudget: rupees(a.costBudgetLpa) })));
 }
+
+const rupees = (v: number | null | undefined) => (v === null || v === undefined ? null : lpaToRupees(v));

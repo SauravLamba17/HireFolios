@@ -15,7 +15,7 @@ export async function ensureListDefaults(tenantId: string, tx: Tx | typeof db = 
   const have = new Set((await tx.selectDistinct({ list: optionItems.list }).from(optionItems).where(eq(optionItems.tenantId, tenantId))).map((r) => r.list));
   const defaults = defaultListItems();
   const rows = LIST_KEYS.filter((k) => !have.has(k)).flatMap((list) =>
-    defaults[list].map((d, i) => ({ tenantId, list, label: d.label, days: d.days, position: i + 1, sample: true })),
+    defaults[list].map((d, i) => ({ tenantId, list, label: d.label, days: d.days, code: d.code ?? null, kind: d.kind ?? null, position: i + 1, sample: true })),
   );
   if (rows.length) await tx.insert(optionItems).values(rows).onConflictDoNothing();
   seeded.add(tenantId);
@@ -25,7 +25,7 @@ export async function ensureListDefaults(tenantId: string, tx: Tx | typeof db = 
 export const getOptionLists = cache(async (tenantId: string): Promise<OptionLists> => {
   await ensureListDefaults(tenantId);
   const rows = await db
-    .select({ id: optionItems.id, list: optionItems.list, label: optionItems.label, days: optionItems.days, active: optionItems.active, sample: optionItems.sample })
+    .select({ id: optionItems.id, list: optionItems.list, label: optionItems.label, days: optionItems.days, active: optionItems.active, sample: optionItems.sample, code: optionItems.code, kind: optionItems.kind })
     .from(optionItems)
     .where(eq(optionItems.tenantId, tenantId))
     .orderBy(asc(optionItems.list), asc(optionItems.position), asc(optionItems.createdAt));

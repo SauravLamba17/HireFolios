@@ -23,14 +23,16 @@ export type Permission =
   | "export" // Excel / CSV downloads
   | "reports"
   | "privacy" // rights requests (access, correction, erasure, grievance)
-  | "audit"; // audit log viewer
+  | "audit" // audit log viewer
+  | "rediscovery" // Phase 3.6: quick-look, tags, suggestions, contact log, call-backs, pool, bulk lists, pushes (HR-only data)
+  | "contactUnblock"; // clear a candidate's "do not contact" (admin)
 
 // The one permission map. Every role must be listed (TypeScript enforces it).
 export const ROLES = {
-  admin: ["dashboard", "candidates", "intake", "settings", "users", "drive", "driveManage", "interview", "override", "resume", "tv", "offer", "export", "reports", "privacy", "audit"],
-  hr: ["dashboard", "candidates", "intake", "drive", "driveManage", "resume", "tv", "offer", "export", "reports", "privacy"],
+  admin: ["dashboard", "candidates", "intake", "settings", "users", "drive", "driveManage", "interview", "override", "resume", "tv", "offer", "export", "reports", "privacy", "audit", "rediscovery", "contactUnblock"],
+  hr: ["dashboard", "candidates", "intake", "drive", "driveManage", "resume", "tv", "offer", "export", "reports", "privacy", "rediscovery"],
   interviewer: ["interview"],
-  manager: ["dashboard", "candidates", "drive", "interview", "override", "resume", "tv", "offer", "reports"],
+  manager: ["dashboard", "candidates", "drive", "interview", "override", "resume", "tv", "offer", "reports", "rediscovery"],
   display: ["tv"],
 } as const satisfies Record<Role, readonly Permission[]>;
 

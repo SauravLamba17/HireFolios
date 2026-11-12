@@ -2,6 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { RejectReasonFields } from "@/components/reject-fields";
+import type { ReasonOption } from "@/lib/rediscovery/categories";
 import { send } from "@/lib/send";
 
 export function StatusToggle({ status }: { status: "available" | "away" | "busy" }) {
@@ -33,12 +35,13 @@ export function StatusToggle({ status }: { status: "available" | "away" | "busy"
 
 type Criterion = { label: string; required: boolean };
 
-export function InterviewForm({ applicationId, token, criteria, reasons }: { applicationId: string; token: string; criteria: Criterion[]; reasons: string[] }) {
+export function InterviewForm({ applicationId, token, criteria, reasons, expectedLpa }: { applicationId: string; token: string; criteria: Criterion[]; reasons: ReasonOption[]; expectedLpa: number | null }) {
   const router = useRouter();
   const [scores, setScores] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState("");
   const [decision, setDecision] = useState<"pass" | "hold" | "reject" | null>(null);
   const [reason, setReason] = useState("");
+  const [cost, setCost] = useState<{ expectedLpa: number | null; budgetLpa: number | null }>({ expectedLpa, budgetLpa: null });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const missing = criteria.filter((c) => c.required && !scores[c.label]).map((c) => c.label);
@@ -49,7 +52,10 @@ export function InterviewForm({ applicationId, token, criteria, reasons }: { app
     if (!decision) return setError("Choose Pass, Hold or Reject.");
     if (decision === "reject" && !reason) return setError("Choose a reject reason.");
     setBusy(true);
-    const err = await send("/api/interview", "POST", { action: "decide", applicationId, scores, notes, decision, rejectReason: decision === "reject" ? reason : null });
+    const err = await send("/api/interview", "POST", { action: "decide", applicationId, scores, notes, decision,
+      rejectReason: decision === "reject" ? reason : null,
+      ...(decision === "reject" && reasons.find((r) => r.label === reason)?.isCost ? { costExpectedLpa: cost.expectedLpa, costBudgetLpa: cost.budgetLpa } : {}),
+    });
     setBusy(false);
     if (err) return setError(err);
     router.refresh(); // panel is free again; the next candidate appears when HR assigns one
@@ -110,13 +116,7 @@ export function InterviewForm({ applicationId, token, criteria, reasons }: { app
         </div>
       </div>
       {decision === "reject" && (
-        <div>
-          <label htmlFor="reason" className="label">Reject reason</label>
-          <select id="reason" value={reason} onChange={(e) => setReason(e.target.value)} className="input">
-            <option value="">Choose…</option>
-            {reasons.map((r) => <option key={r}>{r}</option>)}
-          </select>
-        </div>
+        <RejectReasonFields id="reason" reasons={reasons} value={reason} onChange={setReason} expectedLpa={expectedLpa} onCost={setCost} />
       )}
       {error && <p role="alert" className="alert-error">{error}</p>}
       <button type="button" disabled={busy} onClick={submit} className="btn btn-primary h-14 w-full text-lg">

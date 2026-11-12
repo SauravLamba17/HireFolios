@@ -6,7 +6,8 @@ import { send } from "@/lib/send";
 
 type Criterion = { label: string; required: boolean };
 export type StageRow = { id: string; name: string; active: boolean; isInterview: boolean; criteria: Criterion[]; sample: boolean };
-export type ReasonRow = { id: string; label: string; active: boolean; sample: boolean };
+export type ReasonRow = { id: string; label: string; active: boolean; sample: boolean; categoryCode: string | null };
+type CategoryChoice = { code: string; label: string; active: boolean };
 
 function usePost() {
   const router = useRouter();
@@ -100,19 +101,26 @@ function StageCard({ s, first, last }: { s: StageRow; first: boolean; last: bool
   );
 }
 
-function ReasonRowEdit({ r }: { r: ReasonRow }) {
+function ReasonRowEdit({ r, categories }: { r: ReasonRow; categories: CategoryChoice[] }) {
   const { busy, post, box } = usePost();
   const [label, setLabel] = useState(r.label);
   const [active, setActive] = useState(r.active);
+  const [categoryCode, setCategoryCode] = useState(r.categoryCode ?? "other");
   return (
     <li className="space-y-2 border-b border-slate-100 pb-3">
       <div className="flex flex-wrap items-center gap-2">
         <label className="sr-only" htmlFor={`rr-${r.id}`}>Reason</label>
         <input id={`rr-${r.id}`} value={label} onChange={(e) => setLabel(e.target.value)} maxLength={100} className="input min-w-0 flex-1" />
+        <label className="sr-only" htmlFor={`rc-${r.id}`}>Category of {r.label}</label>
+        <select id={`rc-${r.id}`} value={categoryCode} onChange={(e) => setCategoryCode(e.target.value)} className="input w-auto max-w-72">
+          {categories.filter((c) => c.active || c.code === categoryCode).map((c) => (
+            <option key={c.code} value={c.code}>{c.label}{c.active ? "" : " (retired)"}</option>
+          ))}
+        </select>
         <label className="flex h-12 items-center gap-2 text-sm">
           <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="size-5 accent-blue-700" /> In use
         </label>
-        <button type="button" disabled={busy} onClick={() => post("/api/settings/reasons", "POST", { action: "update", reasonId: r.id, label, active }, "Saved.")} className="btn btn-secondary">
+        <button type="button" disabled={busy} onClick={() => post("/api/settings/reasons", "POST", { action: "update", reasonId: r.id, label, active, categoryCode }, "Saved.")} className="btn btn-secondary">
           Save
         </button>
         {r.sample && <SampleBadge />}
@@ -122,7 +130,7 @@ function ReasonRowEdit({ r }: { r: ReasonRow }) {
   );
 }
 
-export function DriveSettings({ stages, reasons, avgMinutes }: { stages: StageRow[]; reasons: ReasonRow[]; avgMinutes: number | null }) {
+export function DriveSettings({ stages, reasons, categories, avgMinutes }: { stages: StageRow[]; reasons: ReasonRow[]; categories: CategoryChoice[]; avgMinutes: number | null }) {
   const addStage = usePost();
   const addReason = usePost();
   const avg = usePost();
@@ -165,11 +173,11 @@ export function DriveSettings({ stages, reasons, avgMinutes }: { stages: StageRo
       <section className="card space-y-4" aria-labelledby="reasons-h">
         <div>
           <h2 id="reasons-h" className="text-lg font-semibold">Reject reasons</h2>
-          <p className="mt-1 text-sm text-slate-600">Interviewers pick one when they reject. Untick &ldquo;In use&rdquo; to retire a reason; past rejections keep their text.</p>
+          <p className="mt-1 text-sm text-slate-600">Interviewers pick one when they reject. Each reason belongs to a category (Settings → Lists → Reject categories), shown next to the reason and used to find strong people turned away for cost, timing, shift or a filled seat. Untick &ldquo;In use&rdquo; to retire a reason; past rejections keep their text.</p>
         </div>
         <ul className="space-y-3">
           {reasons.map((r) => (
-            <ReasonRowEdit key={JSON.stringify(r)} r={r} />
+            <ReasonRowEdit key={JSON.stringify(r)} r={r} categories={categories} />
           ))}
         </ul>
         <form onSubmit={(e) => onAdd(e, "reason")} className="flex flex-wrap items-end gap-3" aria-label="Add a reject reason">

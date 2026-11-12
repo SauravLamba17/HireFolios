@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import { and, asc, eq, lt, sql } from "drizzle-orm";
 import { db, isUniqueViolation } from "@/db";
-import { applications, candidateFiles, candidates, consents, dailyCounters, jobs, locations, stages } from "@/db/schema";
+import { applications, candidateFiles, candidates, consents, dailyCounters, jobs, locations, otherOffers, stages } from "@/db/schema";
 import { searchTextFor } from "@/lib/candidate-search";
 import { DOCX, sniffType, storageKey, sha256, uploadRoot, writeFileUnder, type FileType } from "@/lib/files";
 import { getCompany } from "@/lib/company";
@@ -211,6 +211,18 @@ export async function POST(req: Request) {
           createdAt: sql`clock_timestamp()`,
         })
         .returning({ id: applications.id });
+      if (d.otherOffer) {
+        // optional "More details": another company's offer in hand (HR only)
+        await tx.insert(otherOffers).values({
+          tenantId: tenant,
+          candidateId: cand.id,
+          company: d.otherOffer.company,
+          offeredCtc: d.otherOffer.offeredCtcLpa === null ? null : lpaToRupees(d.otherOffer.offeredCtcLpa),
+          joiningDate: d.otherOffer.joiningDate,
+          notedOn: today,
+          createdBy: staff.id,
+        });
+      }
 
       // Consent is recorded before any file row (hard rule: consent before camera).
       await tx.insert(consents).values({

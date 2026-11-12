@@ -99,6 +99,16 @@ export const BaseDetails = z.object({
   voiceProcess: z.boolean("Answer: OK with voice process (calls)?"),
   typingWpm: z.int("Typing speed must be a whole number").min(1, "Typing speed must be 1 to 250 WPM").max(250, "Typing speed must be 1 to 250 WPM").nullable(),
   skills: text(500, "Skills are too long (500 characters max)"),
+  // Phase 3.6, optional ("More details"): another company's offer the candidate already has. Never required.
+  otherOffer: z
+    .object({
+      company: text(100, "Company name is too long (100 characters max)"),
+      offeredCtcLpa: lpa("Other offer CTC"),
+      joiningDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Enter the other offer's joining date").refine(isRealDay, "Enter a real joining date").nullable(),
+    })
+    .nullable()
+    .optional()
+    .transform((o) => (o && (o.company || o.offeredCtcLpa !== null || o.joiningDate) ? o : null)),
 });
 
 /** Intake details, checked against this tenant's active list items. */

@@ -8,6 +8,7 @@ const TABS = [
   { href: "/dashboard/settings/lists", label: "Lists" },
   { href: "/dashboard/settings/notice", label: "Privacy notice" },
   { href: "/dashboard/settings/company", label: "Company" },
+  { href: "/dashboard/settings/rediscovery", label: "Rediscovery" },
 ];
 
 export function SettingsTabs() {

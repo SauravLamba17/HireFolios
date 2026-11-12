@@ -3,14 +3,15 @@ import Image from "next/image";
 import Link from "next/link";
 import { and, asc, desc, eq, isNull, ne } from "drizzle-orm";
 import { db } from "@/db";
-import { applications, candidateFiles, candidates, jobs, panels, queueEvents, rejectReasons, scorecards, stages, users } from "@/db/schema";
+import { applications, candidateFiles, candidates, jobs, panels, queueEvents, scorecards, stages, users } from "@/db/schema";
 import { Elapsed } from "@/components/elapsed";
 import { LiveRefresh } from "@/components/live-refresh";
 import { stageList, todayDrive } from "@/lib/drive";
 import { formatDateTimeIST, formatDayIST } from "@/lib/ist";
 import { noticeLabelFrom } from "@/lib/lists";
 import { getOptionLists } from "@/lib/lists-db";
-import { formatLpa } from "@/lib/money";
+import { formatLpa, rupeesToLpa } from "@/lib/money";
+import { reasonOptions } from "@/lib/rediscovery/data";
 import { DECISION_LABELS, experienceLabel } from "@/lib/options";
 import { requireStaff } from "@/lib/session";
 import { InterviewForm, StatusToggle } from "./interview-form";
@@ -69,11 +70,7 @@ export default async function InterviewPage() {
           .innerJoin(users, eq(users.id, scorecards.interviewerId))
           .where(and(eq(scorecards.tenantId, staff.tenantId), eq(scorecards.applicationId, app.id)))
           .orderBy(asc(scorecards.updatedAt)),
-        db
-          .select({ label: rejectReasons.label })
-          .from(rejectReasons)
-          .where(and(eq(rejectReasons.tenantId, staff.tenantId), eq(rejectReasons.active, true)))
-          .orderBy(asc(rejectReasons.position)),
+        reasonOptions(staff.tenantId),
         db
           .select({ at: queueEvents.createdAt })
           .from(queueEvents)
@@ -170,7 +167,7 @@ export default async function InterviewPage() {
               ))}
             </section>
 
-            {stage && <InterviewForm key={app.id} applicationId={app.id} token={app.token} criteria={stage.criteria} reasons={reasons.map((r) => r.label)} />}
+            {stage && <InterviewForm key={app.id} applicationId={app.id} token={app.token} criteria={stage.criteria} reasons={reasons} expectedLpa={app.c.expectedCtc === null ? null : rupeesToLpa(app.c.expectedCtc)} />}
           </div>
 
           <section className="card space-y-3 lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto" aria-labelledby="cv-h">

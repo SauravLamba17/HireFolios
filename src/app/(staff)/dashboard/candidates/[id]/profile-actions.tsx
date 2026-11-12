@@ -2,7 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { CostFields, DeclineCategory, RejectReasonFields } from "@/components/reject-fields";
 import { OFFER_STATUS_LABELS, OUTCOME_LABELS } from "@/lib/options";
+import type { CategoryOption, ReasonOption } from "@/lib/rediscovery/categories";
 import { send } from "@/lib/send";
 
 function useSend(applicationId: string) {
@@ -92,19 +94,33 @@ export function OfferForm({
   offer,
   canJoin,
   today,
+  categories,
+  expectedLpa,
 }: {
   applicationId: string;
-  offer: { status: string | null; offeredCtcLpa: number | null; joiningDate: string | null };
+  offer: { status: string | null; offeredCtcLpa: number | null; joiningDate: string | null; declineCategory: string | null };
   canJoin: boolean;
   today: string;
+  categories: CategoryOption[];
+  expectedLpa: number | null;
 }) {
   const { busy, post, box } = useSend(applicationId);
+  const [status, setStatus] = useState(offer.status ?? "offered");
+  const [declineCategory, setDeclineCategory] = useState(offer.declineCategory ?? "");
+  const [cost, setCost] = useState<{ expectedLpa: number | null }>({ expectedLpa });
+  const costCode = categories.find((c) => c.code === declineCategory)?.code === "cost";
   async function onOffer(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const ctc = String(f.get("ctc") ?? "").trim();
     await post(
-      { action: "offer", status: f.get("status"), offeredCtcLpa: ctc === "" ? null : Number(ctc), joiningDate: String(f.get("joining") || "") || null },
+      {
+        action: "offer",
+        status,
+        offeredCtcLpa: ctc === "" ? null : Number(ctc),
+        joiningDate: String(f.get("joining") || "") || null,
+        ...(status === "declined" ? { declineCategory: declineCategory || null, costExpectedLpa: costCode ? cost.expectedLpa : null } : {}),
+      },
       "Offer saved.",
     );
   }
@@ -120,7 +136,7 @@ export function OfferForm({
       <form onSubmit={onOffer} className="grid gap-3 md:grid-cols-4 md:items-end">
         <div>
           <label htmlFor="offer-status" className="label">Offer status</label>
-          <select id="offer-status" name="status" required defaultValue={offer.status ?? "offered"} className="input">
+          <select id="offer-status" name="status" required value={status} onChange={(e) => setStatus(e.target.value)} className="input">
             {Object.entries(OFFER_STATUS_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </div>
@@ -133,6 +149,12 @@ export function OfferForm({
           <input id="offer-joining" name="joining" type="date" defaultValue={offer.joiningDate ?? ""} className="input" />
         </div>
         <button type="submit" disabled={busy} className="btn btn-secondary">Save offer</button>
+        {status === "declined" && (
+          <div className="space-y-3 md:col-span-4">
+            <DeclineCategory id="offer-decline-cat" categories={categories} value={declineCategory} onChange={setDeclineCategory} />
+            {costCode && <CostFields id="offer-cost" expectedLpa={expectedLpa} against={null} onChange={(v) => setCost({ expectedLpa: v.expectedLpa })} />}
+          </div>
+        )}
       </form>
       {canJoin && (
         <form onSubmit={onJoined} className="flex flex-wrap items-end gap-3">
@@ -148,10 +170,70 @@ export function OfferForm({
   );
 }
 
+/** Other offer in hand (HR only): company, CTC, joining date, noted date. Kept as history. */
+export function OtherOfferForm({ candidateId, today }: { candidateId: string; today: string }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  async function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const f = new FormData(form);
+    const ctc = String(f.get("ctc") ?? "").trim();
+    setBusy(true);
+    const err = await send(`/api/candidates/${candidateId}/rediscovery`, "POST", {
+      action: "otherOffer",
+      company: String(f.get("company") ?? ""),
+      offeredCtcLpa: ctc === "" ? null : Number(ctc),
+      joiningDate: String(f.get("joining") || "") || null,
+      notedOn: String(f.get("noted") || today),
+    });
+    setMsg({ ok: !err, text: err ?? "Other offer saved." });
+    if (!err) form.reset();
+    router.refresh();
+    setBusy(false);
+  }
+  return (
+    <form onSubmit={onSubmit} className="grid gap-3 md:grid-cols-5 md:items-end" aria-label="Add another offer">
+      <div className="md:col-span-2">
+        <label htmlFor="oo-company" className="label">Company</label>
+        <input id="oo-company" name="company" maxLength={100} className="input" />
+      </div>
+      <div>
+        <label htmlFor="oo-ctc" className="label">Offered CTC (LPA)</label>
+        <input id="oo-ctc" name="ctc" type="number" inputMode="decimal" min={0} max={100} step={0.01} className="input" />
+      </div>
+      <div>
+        <label htmlFor="oo-joining" className="label">Their joining date</label>
+        <input id="oo-joining" name="joining" type="date" className="input" />
+      </div>
+      <div>
+        <label htmlFor="oo-noted" className="label">Noted on</label>
+        <input id="oo-noted" name="noted" type="date" max={today} defaultValue={today} className="input" />
+      </div>
+      <div className="md:col-span-5">
+        <button type="submit" disabled={busy} className="btn btn-secondary">Add other offer</button>
+      </div>
+      {msg && <p role={msg.ok ? "status" : "alert"} className={`md:col-span-5 ${msg.ok ? "alert-success" : "alert-error"}`}>{msg.text}</p>}
+    </form>
+  );
+}
+
 /** Manager / admin: move to any stage, or set any outcome, with a mandatory reason (audited). */
-export function OverrideForm({ applicationId, stages, reasons }: { applicationId: string; stages: { id: string; name: string }[]; reasons: string[] }) {
+export function OverrideForm({ applicationId, stages, reasons, categories, expectedLpa, offeredLpa }: {
+  applicationId: string;
+  stages: { id: string; name: string }[];
+  reasons: ReasonOption[];
+  categories: CategoryOption[];
+  expectedLpa: number | null;
+  offeredLpa: number | null;
+}) {
   const { busy, post, box } = useSend(applicationId);
   const [outcome, setOutcome] = useState("");
+  const [rejectReason, setRejectReason] = useState("");
+  const [category, setCategory] = useState("");
+  const [cost, setCost] = useState<{ expectedLpa: number | null; budgetLpa: number | null }>({ expectedLpa, budgetLpa: null });
+  const isCost = (outcome === "rejected" && reasons.find((r) => r.label === rejectReason)?.isCost) || (outcome === "offer_declined" && category === "cost");
 
   async function onStage(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -164,12 +246,21 @@ export function OverrideForm({ applicationId, stages, reasons }: { applicationId
     const form = e.currentTarget;
     const f = new FormData(form);
     const ok = await post(
-      { action: "setOutcome", outcome, rejectReason: outcome === "rejected" ? f.get("rejectReason") || null : null, reason: f.get("reason") },
+      {
+        action: "setOutcome",
+        outcome,
+        rejectReason: outcome === "rejected" ? rejectReason || null : null,
+        reason: f.get("reason"),
+        category: outcome === "offer_declined" ? category || null : null,
+        ...(isCost ? { costExpectedLpa: cost.expectedLpa, costBudgetLpa: cost.budgetLpa } : {}),
+      },
       "Outcome changed.",
     );
     if (ok) {
       form.reset();
       setOutcome("");
+      setRejectReason("");
+      setCategory("");
     }
   }
 
@@ -193,13 +284,11 @@ export function OverrideForm({ applicationId, stages, reasons }: { applicationId
             <option value="" disabled>Choose…</option>
             {Object.entries(OUTCOME_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
-          {outcome === "rejected" && (
+          {outcome === "rejected" && <RejectReasonFields id="ov-reject" reasons={reasons} value={rejectReason} onChange={setRejectReason} expectedLpa={expectedLpa} onCost={setCost} />}
+          {outcome === "offer_declined" && (
             <>
-              <label htmlFor="ov-reject" className="label">Reject reason</label>
-              <select id="ov-reject" name="rejectReason" required defaultValue="" className="input">
-                <option value="" disabled>Choose…</option>
-                {reasons.map((r) => <option key={r}>{r}</option>)}
-              </select>
+              <DeclineCategory id="ov-decline-cat" categories={categories} value={category} onChange={setCategory} />
+              {category === "cost" && <CostFields id="ov-decline-cost" expectedLpa={expectedLpa} budgetLpa={offeredLpa} against="Offered CTC" onChange={setCost} />}
             </>
           )}
           <label htmlFor="ov-outcome-reason" className="label">Reason</label>

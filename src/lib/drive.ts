@@ -4,9 +4,11 @@
 import "server-only";
 import { and, asc, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
-import { applications, consents, drives, locations, panels, queueEvents, rejectReasons, scorecards, stages, tenants, users } from "@/db/schema";
+import { applications, consents, drives, locations, panels, queueEvents, scorecards, stages, tenants, users } from "@/db/schema";
 import { applyDecision, canMarkJoined, FlowError, NotFoundError, offerOutcome, outcomeDates, pickNext, queueOrder, queueStage, waitEstimate, type Decision, type OfferStatus, type Outcome, type StageInfo } from "@/lib/flow";
 import { todayIST } from "@/lib/ist";
+import { CAT } from "@/lib/rediscovery/categories";
+import { isActiveCategory, reasonCategory } from "@/lib/rediscovery/data";
 import { audit } from "@/lib/staff";
 import type { Staff } from "@/lib/session";
 
@@ -379,15 +381,39 @@ export async function requeue(tx: Tx, staff: Staff, applicationId: string) {
   await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "queue.return", entityType: "application", entityId: a.id, meta: { panelId: a.panelId } });
 }
 
+/** Why a visit was not a hire (Phase 3.6): category code and, for cost, the two figures (rupees per year). */
+export type DecisionDetail = { category: string | null; costExpected: number | null; costBudget: number | null };
+const NO_DETAIL: DecisionDetail = { category: null, costExpected: null, costBudget: null };
+
+/** Category / cost columns for an outcome: no-show and walked away are always "no_show"; open outcomes have none. */
+function detailColumns(outcome: Outcome, d: DecisionDetail) {
+  const category = outcome === "rejected" || outcome === "offer_declined" ? d.category : outcome === "no_show" || outcome === "withdrawn" ? CAT.noShow : null;
+  const cost = category === CAT.cost;
+  return { rejectCategory: category, costExpectedCtc: cost ? d.costExpected : null, costBudgetCtc: cost ? d.costBudget : null };
+}
+
 /** Sets an outcome with its dates, frees the panel and logs it. */
-async function setOutcome(tx: Tx, staff: Staff, a: typeof applications.$inferSelect, outcome: Outcome, stageId: string, rejectReason: string | null) {
+async function setOutcome(tx: Tx, staff: Staff, a: typeof applications.$inferSelect, outcome: Outcome, stageId: string, rejectReason: string | null, detail: DecisionDetail = NO_DETAIL) {
   const t = await tenantRetention(tx, staff.tenantId);
   const dates = outcomeDates(outcome, new Date(), t, await talentPool(tx, staff.tenantId, a.candidateId));
   await tx
     .update(applications)
-    .set({ outcome, currentStageId: stageId, rejectReason: outcome === "rejected" ? rejectReason : null, panelId: null, ...dates })
+    .set({ outcome, currentStageId: stageId, rejectReason: outcome === "rejected" ? rejectReason : null, panelId: null, ...dates, ...detailColumns(outcome, detail) })
     .where(eq(applications.id, a.id));
   await freePanelOf(tx, a.panelId);
+}
+
+/** Category of the chosen reject reason (must be an active reason of this tenant) plus the cost figures, if cost. */
+async function rejectDetail(tx: Tx, staff: Staff, reason: string | null, cost: { costExpected?: number | null; costBudget?: number | null }): Promise<DecisionDetail> {
+  const category = await reasonCategory(tx, staff.tenantId, reason ?? "");
+  if (!category) throw new FlowError("Choose a reject reason from the list.");
+  return { category, costExpected: cost.costExpected ?? null, costBudget: cost.costBudget ?? null };
+}
+
+/** A declined offer's optional category (an active one of this tenant). */
+async function declineDetail(tx: Tx, staff: Staff, category: string | null, cost: { costExpected?: number | null; costBudget?: number | null }): Promise<DecisionDetail> {
+  if (category && !(await isActiveCategory(tx, staff.tenantId, category))) throw new FlowError("Choose a category from the list.");
+  return { category, costExpected: cost.costExpected ?? null, costBudget: cost.costBudget ?? null };
 }
 
 export async function markGone(tx: Tx, staff: Staff, applicationId: string, kind: "no_show" | "withdrawn") {
@@ -420,7 +446,7 @@ export async function endDay(tx: Tx, staff: Staff, reopen: boolean) {
 export async function decide(
   tx: Tx,
   staff: Staff,
-  input: { applicationId: string; scores: Record<string, number>; notes: string | null; decision: Decision; rejectReason: string | null },
+  input: { applicationId: string; scores: Record<string, number>; notes: string | null; decision: Decision; rejectReason: string | null; costExpected?: number | null; costBudget?: number | null },
 ) {
   const a = await lockApplication(tx, staff, input.applicationId);
   if (!a.panelId || a.outcome !== "in_progress") throw new FlowError("This candidate is no longer in your interview.");
@@ -436,13 +462,7 @@ export async function decide(
   }
   const missing = stage.criteria.filter((c) => c.required && input.scores[c.label] === undefined).map((c) => c.label);
   if (missing.length) throw new FlowError(`Rate the required criteria: ${missing.join(", ")}.`);
-  if (input.decision === "reject") {
-    const [ok] = await tx
-      .select({ id: rejectReasons.id })
-      .from(rejectReasons)
-      .where(and(eq(rejectReasons.tenantId, staff.tenantId), eq(rejectReasons.label, input.rejectReason ?? ""), eq(rejectReasons.active, true)));
-    if (!ok) throw new FlowError("Choose a reject reason from the list.");
-  }
+  const detail = input.decision === "reject" ? await rejectDetail(tx, staff, input.rejectReason, input) : NO_DETAIL;
   const move = applyDecision(info, a.currentStageId, input.decision, input.rejectReason);
 
   const values = Object.values(input.scores);
@@ -461,12 +481,12 @@ export async function decide(
     .values({ tenantId: staff.tenantId, applicationId: a.id, stageId: a.currentStageId, interviewerId: staff.id, ...card })
     .onConflictDoUpdate({ target: [scorecards.applicationId, scorecards.stageId, scorecards.interviewerId], set: card });
 
-  await setOutcome(tx, staff, a, move.outcome, move.stageId, move.rejectReason);
+  await setOutcome(tx, staff, a, move.outcome, move.stageId, move.rejectReason, detail);
   await tx.insert(queueEvents).values({ tenantId: staff.tenantId, applicationId: a.id, stageId: a.currentStageId, panelId: p.id, event: "completed", actorUserId: staff.id, interviewerId: staff.id });
   if (move.outcome === "in_progress") {
     await tx.insert(queueEvents).values({ tenantId: staff.tenantId, applicationId: a.id, stageId: move.stageId, event: "queued", actorUserId: staff.id });
   }
-  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "interview.decision", entityType: "application", entityId: a.id, meta: { stageId: a.currentStageId, decision: input.decision, outcome: move.outcome, nextStageId: move.stageId } });
+  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "interview.decision", entityType: "application", entityId: a.id, meta: { stageId: a.currentStageId, decision: input.decision, outcome: move.outcome, nextStageId: move.stageId, category: detail.category } });
   return move;
 }
 
@@ -475,7 +495,10 @@ export async function decide(
 export async function override(
   tx: Tx,
   staff: Staff,
-  input: { applicationId: string; reason: string } & ({ kind: "stage"; stageId: string } | { kind: "outcome"; outcome: Outcome; rejectReason: string | null }),
+  input: { applicationId: string; reason: string } & (
+    | { kind: "stage"; stageId: string }
+    | { kind: "outcome"; outcome: Outcome; rejectReason: string | null; category?: string | null; costExpected?: number | null; costBudget?: number | null }
+  ),
 ) {
   const a = await lockApplication(tx, staff, input.applicationId);
   const info = await stageList(tx, staff.tenantId);
@@ -486,18 +509,14 @@ export async function override(
     await tx.update(applications).set({ driveId: drive.id }).where(eq(applications.id, a.id)); // back on today's board
     await tx.insert(queueEvents).values({ tenantId: staff.tenantId, applicationId: a.id, stageId: input.stageId, event: "queued", actorUserId: staff.id, note: `Override: ${input.reason}` });
   } else {
-    if (input.outcome === "rejected") {
-      const [ok] = await tx
-        .select({ id: rejectReasons.id })
-        .from(rejectReasons)
-        .where(and(eq(rejectReasons.tenantId, staff.tenantId), eq(rejectReasons.label, input.rejectReason ?? ""), eq(rejectReasons.active, true)));
-      if (!ok) throw new FlowError("Choose a reject reason from the list.");
-    }
+    let detail = NO_DETAIL;
+    if (input.outcome === "rejected") detail = await rejectDetail(tx, staff, input.rejectReason, input);
+    if (input.outcome === "offer_declined") detail = await declineDetail(tx, staff, input.category ?? null, input);
     if (input.outcome === "in_progress") {
       const drive = await todayDrive(tx, staff.tenantId);
       await tx.update(applications).set({ driveId: drive.id }).where(eq(applications.id, a.id));
     }
-    await setOutcome(tx, staff, a, input.outcome, a.currentStageId, input.rejectReason);
+    await setOutcome(tx, staff, a, input.outcome, a.currentStageId, input.rejectReason, detail);
     await tx.insert(queueEvents).values({ tenantId: staff.tenantId, applicationId: a.id, stageId: a.currentStageId, panelId: a.panelId, event: input.outcome === "in_progress" ? "queued" : "completed", actorUserId: staff.id, note: `Override: ${input.reason}` });
   }
   await audit(tx, {
@@ -526,17 +545,22 @@ export async function recordOffer(
   tx: Tx,
   staff: Staff,
   applicationId: string,
-  input: { status: OfferStatus; offeredCtc: number | null; joiningDate: string | null },
+  input: { status: OfferStatus; offeredCtc: number | null; joiningDate: string | null; declineCategory?: string | null; costExpected?: number | null; riskHints?: string[] },
 ) {
   const a = await lockApplication(tx, staff, applicationId);
   const next = offerOutcome(a.outcome as Outcome, input.status);
-  if (next !== a.outcome) await setOutcome(tx, staff, a, next, a.currentStageId, null);
+  if (next === "offer_declined") {
+    // why they said no (optional): a category, and for cost what they asked against what we offered
+    const detail = await declineDetail(tx, staff, input.declineCategory ?? null, { costExpected: input.costExpected, costBudget: input.offeredCtc });
+    if (next !== a.outcome) await setOutcome(tx, staff, a, next, a.currentStageId, null, detail);
+    else await tx.update(applications).set(detailColumns(next, detail)).where(eq(applications.id, a.id));
+  } else if (next !== a.outcome) await setOutcome(tx, staff, a, next, a.currentStageId, null);
   await tx
     .update(applications)
-    .set({ offerStatus: input.status, offeredCtc: input.offeredCtc, joiningDate: input.joiningDate })
+    .set({ offerStatus: input.status, offeredCtc: input.offeredCtc, joiningDate: input.joiningDate, ...(input.riskHints ? { riskHints: input.riskHints } : {}) })
     .where(eq(applications.id, a.id));
   await tx.insert(queueEvents).values({ tenantId: staff.tenantId, applicationId: a.id, stageId: a.currentStageId, event: "completed", actorUserId: staff.id, note: `Offer ${input.status}` });
-  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "application.offer", entityType: "application", entityId: a.id, meta: { status: input.status, outcome: next } });
+  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "application.offer", entityType: "application", entityId: a.id, meta: { status: input.status, outcome: next, category: next === "offer_declined" ? (input.declineCategory ?? null) : null } });
 }
 
 export async function markJoined(tx: Tx, staff: Staff, applicationId: string, joinedOn: string) {

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { db, isUuid } from "@/db";
-import { applications, candidateFiles, candidates, consents, jobs, rejectReasons, stages, users } from "@/db/schema";
+import { applications, candidateFiles, candidates, consents, jobs, otherOffers, stages, users } from "@/db/schema";
 import { StatusBadge, Tag } from "@/components/status-badge";
 import { formatDateIST, formatDateTimeIST, formatDayIST, todayIST } from "@/lib/ist";
 import { formatLpa, rupeesToLpa } from "@/lib/money";
@@ -14,7 +14,8 @@ import { NOTICE_LANGUAGES } from "@/lib/notice";
 import { canViewCandidate } from "@/lib/access";
 import { DECISION_LABELS, experienceLabel, OFFER_STATUS_LABELS } from "@/lib/options";
 import { can, requireStaff } from "@/lib/session";
-import { CorrectDetails, OfferForm, OverrideForm, ResumeButton } from "./profile-actions";
+import { categoryMap, categoryOf, categoryOptions, reasonOptions } from "@/lib/rediscovery/data";
+import { CorrectDetails, OfferForm, OtherOfferForm, OverrideForm, ResumeButton } from "./profile-actions";
 import { audit } from "@/lib/staff";
 
 export const metadata: Metadata = { title: "Candidate" };
@@ -63,7 +64,7 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
   const c = await db.query.candidates.findFirst({ where: and(eq(candidates.id, id), eq(candidates.tenantId, tenantId)) });
   if (!c) notFound(); // another tenant's id looks exactly like a missing one
 
-  const [visits, files, consentRows, events, cards, stageRows, reasonRows] = await Promise.all([
+  const [visits, files, consentRows, events, cards, stageRows, reasonRows, offersElsewhere] = await Promise.all([
     db
       .select({
         id: applications.id,
@@ -82,6 +83,7 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
         joinedOn: applications.joinedOn,
         source: applications.source,
         hrNotes: applications.hrNotes,
+        category: applications.rejectCategory,
         by: users.name,
       })
       .from(applications)
@@ -119,15 +121,20 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
       where a.tenant_id = ${tenantId} and a.candidate_id = ${id}
       order by sc.updated_at`),
     db.select({ id: stages.id, name: stages.name }).from(stages).where(eq(stages.tenantId, tenantId)).orderBy(asc(stages.position)),
+    reasonOptions(tenantId),
     db
-      .select({ label: rejectReasons.label })
-      .from(rejectReasons)
-      .where(and(eq(rejectReasons.tenantId, tenantId), eq(rejectReasons.active, true)))
-      .orderBy(asc(rejectReasons.position)),
+      .select({ id: otherOffers.id, company: otherOffers.company, offeredCtc: otherOffers.offeredCtc, joiningDate: otherOffers.joiningDate, notedOn: otherOffers.notedOn, by: users.name })
+      .from(otherOffers)
+      .leftJoin(users, eq(users.id, otherOffers.createdBy))
+      .where(and(eq(otherOffers.tenantId, tenantId), eq(otherOffers.candidateId, id)))
+      .orderBy(desc(otherOffers.notedOn), desc(otherOffers.createdAt)),
   ]);
+  const cats = categoryMap(lists);
   const canOverride = can(staff.role, "override");
   const canResume = can(staff.role, "resume");
   const canOffer = can(staff.role, "offer");
+  const hrOnly = can(staff.role, "rediscovery"); // HR-only data: cost figures, other offers, tags, contact log
+  const expectedLpa = c.expectedCtc === null ? null : rupeesToLpa(c.expectedCtc);
 
   await audit(db, { tenantId, actorUserId: staff.id, action: "candidate.view", entityType: "candidate", entityId: id });
 
@@ -219,6 +226,7 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
                 <span className="text-slate-700">{v.job}</span>
                 <StatusBadge outcome={v.outcome} stage={v.stage} />
                 {v.rejectReason && <span className="text-sm text-slate-700">Reason: {v.rejectReason}</span>}
+                {v.category && <span className="text-sm text-slate-600">Category: {categoryOf(cats, v.category)!.label}</span>}
               </div>
               <p className="text-sm text-slate-600">
                 {[
@@ -277,16 +285,51 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
               {vi === 0 && canOffer && (v.outcome === "selected" || v.outcome === "offer_declined") && (
                 <OfferForm
                   applicationId={v.id}
-                  offer={{ status: v.offerStatus, offeredCtcLpa: v.offeredCtc === null ? null : rupeesToLpa(v.offeredCtc), joiningDate: v.joiningDate }}
+                  offer={{ status: v.offerStatus, offeredCtcLpa: v.offeredCtc === null ? null : rupeesToLpa(v.offeredCtc), joiningDate: v.joiningDate, declineCategory: v.outcome === "offer_declined" ? v.category : null }}
+                  categories={categoryOptions(lists)}
+                  expectedLpa={expectedLpa}
                   canJoin={v.outcome === "selected" && v.offerStatus !== "declined"}
                   today={todayIST()}
                 />
               )}
-              {vi === 0 && canOverride && <OverrideForm applicationId={v.id} stages={stageRows} reasons={reasonRows.map((r) => r.label)} />}
+              {vi === 0 && canOverride && (
+                <OverrideForm
+                  applicationId={v.id}
+                  stages={stageRows}
+                  reasons={reasonRows}
+                  categories={categoryOptions(lists)}
+                  expectedLpa={expectedLpa}
+                  offeredLpa={v.offeredCtc === null ? null : rupeesToLpa(v.offeredCtc)}
+                />
+              )}
             </article>
           );
         })}
       </section>
+
+      {hrOnly && (
+        <section className="card space-y-4" aria-labelledby="oo-h">
+          <h2 id="oo-h" className="text-lg font-semibold">Other offers in hand</h2>
+          {offersElsewhere.length === 0 ? (
+            <p className="text-slate-600">None noted.</p>
+          ) : (
+            <ul className="space-y-1">
+              {offersElsewhere.map((o, i) => (
+                <li key={o.id} className={i === 0 ? "font-medium" : "text-slate-600"}>
+                  {[o.company ?? "Company not given", o.offeredCtc !== null && formatLpa(o.offeredCtc), o.joiningDate && `joining ${formatDayIST(o.joiningDate)}`].filter(Boolean).join(" · ")}
+                  <span className="text-sm text-slate-500"> · noted {formatDayIST(o.notedOn)}{o.by ? ` by ${o.by}` : ""}{i === 0 ? " (latest)" : ""}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <details>
+            <summary className="cursor-pointer text-blue-700 underline">Add another offer</summary>
+            <div className="mt-3">
+              <OtherOfferForm candidateId={c.id} today={todayIST()} />
+            </div>
+          </details>
+        </section>
+      )}
 
       <section className="card space-y-4" aria-labelledby="cv-h">
         <h2 id="cv-h" className="text-lg font-semibold">CV</h2>

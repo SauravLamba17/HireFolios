@@ -42,7 +42,7 @@ export default async function SettingsPage() {
       .where(eq(stages.tenantId, staff.tenantId))
       .orderBy(asc(stages.position)),
     db
-      .select({ id: rejectReasons.id, label: rejectReasons.label, active: rejectReasons.active, sample: rejectReasons.sample })
+      .select({ id: rejectReasons.id, label: rejectReasons.label, active: rejectReasons.active, sample: rejectReasons.sample, categoryCode: rejectReasons.categoryCode })
       .from(rejectReasons)
       .where(eq(rejectReasons.tenantId, staff.tenantId))
       .orderBy(asc(rejectReasons.position)),
@@ -60,7 +60,12 @@ export default async function SettingsPage() {
   return (
     <div className="space-y-8">
       <SettingsManager jobs={jobRows} locations={locationRows} certifications={activeLabels(lists, "certification")} />
-      <DriveSettings stages={stageRows} reasons={reasonRows} avgMinutes={tenant?.avg ?? null} />
+      <DriveSettings
+        stages={stageRows}
+        reasons={reasonRows}
+        categories={lists.reject_category.filter((c) => c.code).map((c) => ({ code: c.code!, label: c.label, active: c.active }))}
+        avgMinutes={tenant?.avg ?? null}
+      />
       <RetentionSettings
         cooldownDays={tenant.cooldown}
         photoRetentionDays={tenant.photo}

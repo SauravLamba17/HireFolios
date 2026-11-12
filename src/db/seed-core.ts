@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { jobs, locations, rejectReasons, stages, tenants, users } from "@/db/schema";
 import { REJECT_REASONS, SAMPLE_CRITERIA } from "@/lib/options";
+import { categoryForSampleReason } from "@/lib/rediscovery/categories";
 import { ensureListDefaults } from "@/lib/lists-db";
 import { ensureNotice } from "@/lib/notice-db";
 import { audit, createStaff } from "@/lib/staff";
@@ -61,7 +62,7 @@ export async function seed() {
     );
   }
   if ((await db.$count(rejectReasons, eq(rejectReasons.tenantId, tenant.id))) === 0) {
-    await db.insert(rejectReasons).values(REJECT_REASONS.map((label, i) => ({ tenantId: tenant.id, label, position: i + 1, sample: true })));
+    await db.insert(rejectReasons).values(REJECT_REASONS.map((label, i) => ({ tenantId: tenant.id, label, position: i + 1, sample: true, categoryCode: categoryForSampleReason(label) })));
   }
   await db
     .insert(jobs)

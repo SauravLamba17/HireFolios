@@ -10,6 +10,7 @@ import { uploadRoot } from "@/lib/files";
 import { DEFAULT_NOTICE_VERSION as NOTICE_VERSION } from "@/lib/notice"; // a new tenant starts with this version
 import { planPurge, runPurge } from "@/lib/purge";
 import { createStaff } from "@/lib/staff";
+import { rediscoverySmoke } from "./smoke-rediscovery";
 
 const BASE = (process.env.SMOKE_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const RUN = Date.now().toString(36);
@@ -99,7 +100,13 @@ async function makeTenant(slug: string) {
     { tenantId: t.id, name: "Registered", position: 1 },
     { tenantId: t.id, name: "HR screen", position: 2, isInterview: true, criteria: [{ label: "Communication", required: true }] },
   ]);
-  await db.insert(s.rejectReasons).values(["Typing speed below requirement", "Notice period too long"].map((label, i) => ({ tenantId: t.id, label, position: i + 1 })));
+  await db.insert(s.rejectReasons).values(
+    [
+      ["Typing speed below requirement", "typing_voice"],
+      ["Notice period too long", "notice_timing"],
+      ["Salary expectation above budget", "cost"],
+    ].map(([label, categoryCode], i) => ({ tenantId: t.id, label, position: i + 1, categoryCode })),
+  );
   await db.insert(s.locations).values({ tenantId: t.id, name: "Smoke office" });
   const jobsRows = await db
     .insert(s.jobs)
@@ -290,12 +297,14 @@ async function main() {
       i1: { email: `int1-${RUN}@smoke.example.test`, password: `Smoke-${crypto.randomUUID()}` },
       hrB: { email: `hrb-${RUN}@smoke.example.test`, password: `Smoke-${crypto.randomUUID()}` },
       tv: { email: `tv-${RUN}@smoke.example.test`, password: `Smoke-${crypto.randomUUID()}` },
+      adm: { email: `adm-${RUN}@smoke.example.test`, password: `Smoke-${crypto.randomUUID()}` },
     };
     const ids: Record<string, string> = {};
     await db.transaction(async (tx) => {
       ids.i1 = (await createStaff(tx, { tenantId: A.tenant.id, name: "Smoke Interviewer", email: people.i1.email, role: "interviewer", password: people.i1.password, temporary: false }))!;
       ids.hrB = (await createStaff(tx, { tenantId: B.tenant.id, name: "Smoke HR B", email: people.hrB.email, role: "hr", password: people.hrB.password, temporary: false }))!;
       ids.tv = (await createStaff(tx, { tenantId: A.tenant.id, name: "Smoke Lobby TV", email: people.tv.email, role: "display", password: people.tv.password, temporary: false }))!;
+      ids.adm = (await createStaff(tx, { tenantId: A.tenant.id, name: "Smoke Admin", email: people.adm.email, role: "admin", password: people.adm.password, temporary: false }))!;
     });
     const hrCookie = cookie;
     const cookies: Record<string, string> = {};
@@ -391,6 +400,10 @@ async function main() {
     check("interviewer may now open candidate 1 (assigned earlier)", (await iv(`/dashboard/candidates/${first.candidateId}`)).status === 200);
     const audit2 = await db.select().from(s.auditLog).where(eq(s.auditLog.tenantId, A.tenant.id));
     check("drive actions audited with ids only", audit2.some((a) => a.action === "interview.decision") && audit2.some((a) => a.action === "queue.assign") && audit2.every((a) => !pii.some((p) => JSON.stringify(a.meta ?? {}).includes(p))));
+    cookie = hrCookie;
+
+    // ---------- Phase 3.6: rediscovery (scripts/smoke-rediscovery.ts) ----------
+    await rediscoverySmoke({ check, as, tenantA: A.tenant.id, tenantB: B.tenant.id, panelId: panel.id, hrScreenId: hrScreen.id, pii, candidates: { pool: first.candidateId, rejected: m2app.candidateId } });
     cookie = hrCookie;
 
     // ---------- Phase 3: the deletion job, in its own tenant, with dates shifted into the past ----------

@@ -362,6 +362,20 @@ Phase 3 (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is 
 - Still open from earlier phases: office-PC-only checks (reboot, LAN, real webcam), `npm audit` items in build tools,
   staff emails unique across tenants, in-memory sign-in rate limit, `update-user` rename, in-process live-update bus.
 
+## Phase 3.6 — Candidate 360 + rediscovery (in progress, spec: docs/REDISCOVERY.md)
+
+- [x] **A** — spec (`docs/REDISCOVERY.md`); migration `0006_rediscovery` (adds only, backfills reason / visit categories;
+      backfill checked on the dev database with a throwaway tenant); `tenant_settings` + Settings → Rediscovery (sample
+      values, limits, audited); reject categories + rediscovery tags as Settings → Lists (codes + kinds; system tags can't be
+      retired); category per reject reason (editor column); category + cost figures on interview reject, manager override and
+      declined offer; other offers in hand (intake "More details", profile, history); hiring summary engine
+      (`src/lib/rediscovery/summary.ts`) + `GET /api/candidates/[id]/summary`; permissions `rediscovery`, `contactUnblock`
+- [ ] **B** — tags, suggestions, do not rehire, score change
+- [ ] **C** — quick-look search, profile summary card
+- [ ] **D** — contact log, cooling, templates, do not contact, call-backs, consent after the visit, keep period
+- [ ] **E** — pool, bulk ranking, hiring pushes
+- [ ] **F** — joining-risk hints, reports, demo data, docs, final regression
+
 ## Phase 4 — next
 
 Manual entry by HR stays available at every step (CLAUDE.md hard rule 13; `e2e/manual-intake.spec.ts` must keep passing).

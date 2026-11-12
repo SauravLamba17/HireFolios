@@ -43,6 +43,13 @@
       "when": 1794472901565,
       "tag": "0005_lists_notice_company",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794501444539,
+      "tag": "0006_rediscovery",
+      "breakpoints": true
     }
   ]
 }
