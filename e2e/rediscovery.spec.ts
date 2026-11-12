@@ -68,7 +68,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   await person("P1", { name: `Priya Costly ${run}`, outcome: "in_progress", stageName: "Manager round", cards: [["HR screen", { Communication: 4, Knowledge: 4 }], ["Manager round", { Communication: 4, Knowledge: 5 }]], expected: 420000 });
   await person("P2", { name: `Seema Seat ${run}`, outcome: "rejected", reason: "Position filled / better candidate chosen", category: "seat_filled", stageName: "Manager round", cards: [["HR screen", { Communication: 3, Knowledge: 3 }], ["Manager round", { Communication: 3, Knowledge: 3 }]] });
   await person("P3", { name: `Dinesh Skills ${run}`, outcome: "rejected", reason: "No relevant RCM experience", category: "knowledge", stageName: "HR screen", cards: [["HR screen", { Communication: 2, Knowledge: 2 }]] });
-  for (const [key, viewport] of [["hr", { width: 1366, height: 768 }], ["mgr", { width: 1440, height: 900 }]] as const) {
+  for (const [key, viewport] of [["hr", { width: 1366, height: 768 }], ["mgr", { width: 1440, height: 900 }], ["iv", { width: 1366, height: 768 }]] as const) {
     pages[key] = await (await browser.newContext({ viewport, acceptDownloads: true })).newPage();
     await signIn(pages[key], who[key]);
   }
@@ -171,4 +171,63 @@ test("B: Do not rehire → red HR-only warning at intake lookup; the consent scr
   await expect(h.getByRole("checkbox", { name: /I have read this notice/ })).toBeVisible();
   const consentText = await h.locator("body").innerText();
   for (const hidden of ["Do not rehire", "Abusive", "HR only", "Cooldown"]) expect(consentText).not.toContain(hidden);
+});
+
+/** Adds another visit to a person (days ago, outcome, category, scorecards). */
+async function extraVisit(key: string, o: { daysAgo: number; outcome: string; reason?: string | null; category?: string | null; stageName: string; cards: [string, Record<string, number>][]; token: string }) {
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(daysAgo(o.daysAgo));
+  const [a] = await sql`insert into applications (tenant_id, candidate_id, job_id, location_id, token, token_date, current_stage_id, outcome, reject_reason, reject_category, client_request_id, created_at, decided_at, purge_after, photo_purge_after)
+    values (${tenantId}, ${people[key].id}, ${jobId}, ${stage.loc}, ${o.token}, ${day}, ${stage[o.stageName]}, ${o.outcome}, ${o.reason ?? null}, ${o.category ?? null}, ${crypto.randomUUID()}, ${daysAgo(o.daysAgo)}, ${daysAgo(o.daysAgo)},
+      ${new Date(Date.now() + 300 * 864e5)}, ${new Date(Date.now() + 120 * 864e5)}) returning id`;
+  for (const [st, scores] of o.cards) {
+    await sql`insert into scorecards (tenant_id, application_id, stage_id, interviewer_id, scores, overall, decision, updated_at) values (${tenantId}, ${a.id}, ${stage[st]}, ${who.iv.id}, ${sql.json(scores)}, 3, 'reject', ${daysAgo(o.daysAgo)})`;
+  }
+}
+
+test("C: quick-look finds a typo'd name, 4 mobile digits, tells same names apart, works by keyboard only", async () => {
+  await person("K1", { name: "Kavita Sharma", outcome: "rejected", reason: "No relevant RCM experience", category: "knowledge", stageName: "HR screen", cards: [["HR screen", { Communication: 3, Knowledge: 3 }]], city: "Mohali" });
+  await person("K2", { name: "Kavita Sharma", outcome: "rejected", reason: "No relevant RCM experience", category: "knowledge", stageName: "HR screen", cards: [], city: "Zirakpur" });
+  const h = pages.hr;
+  await h.goto("/dashboard");
+  await h.locator("body").press("/"); // "/" focuses the box
+  const box = h.getByRole("combobox", { name: "Quick look: name or mobile" });
+  await expect(box).toBeFocused();
+  await h.keyboard.type("Kavta Sharma"); // typo: missing "i"
+  const list = h.getByRole("listbox", { name: "Quick look results" });
+  await expect(list.getByRole("option")).toHaveCount(2);
+  await expect(list.getByRole("option", { name: new RegExp(`${people.K1.mobile} · Mohali`) })).toBeVisible();
+  await expect(list.getByRole("option", { name: new RegExp(`${people.K2.mobile} · Zirakpur`) })).toBeVisible();
+  await shoot(h, "quick-look-open", { width: 1366, height: 768 });
+  await h.keyboard.press("ArrowDown");
+  await expect(box).toHaveAttribute("aria-activedescendant", /opt-1$/);
+  await h.keyboard.press("Escape");
+  await expect(list).toHaveCount(0);
+
+  await box.fill(people.P2.mobile.slice(-4));
+  await expect(list.getByRole("option", { name: new RegExp(people.P2.name) })).toBeVisible();
+  await box.press("ArrowUp"); // first row
+  await box.press("Enter");
+  await expect(h).toHaveURL(new RegExp(`/dashboard/candidates/${people.P2.id}$`));
+  await expect(h.getByRole("heading", { name: people.P2.name })).toBeVisible();
+});
+
+test("C: returning candidate's card: 3 visits, score change, latest line; interviewer has no quick-look", async () => {
+  await person("R3", { name: `Rohit Thrice ${run}`, outcome: "rejected", reason: "Salary expectation above budget", category: "cost", stageName: "HR screen", cards: [["HR screen", { Communication: 4, Knowledge: 3.8 }]], token: "R-90" });
+  await extraVisit("R3", { daysAgo: 60, outcome: "rejected", reason: "No relevant RCM experience", category: "knowledge", stageName: "HR screen", cards: [["HR screen", { Communication: 3, Knowledge: 2.6 }]], token: "R-91" });
+  await extraVisit("R3", { daysAgo: 30, outcome: "no_show", category: "no_show", stageName: "Registered", cards: [], token: "R-92" });
+  const h = pages.hr;
+  await h.goto(`/dashboard/candidates/${people.R3.id}`);
+  const card = h.getByTestId("summary-card");
+  await expect(card).toContainText("3 visits");
+  await expect(card.getByTestId("score-change")).toHaveText("↑ 2.8 → 3.9, +1.1");
+  await expect(card.getByTestId("summary-line")).toHaveText("Not hired — Cost / salary expectation: no figures recorded · reached HR screen · avg 3.9/5 · 3 visits");
+  await expect(card.getByRole("list", { name: "Visits at a glance" }).getByRole("listitem")).toHaveCount(3);
+  await expect(card.getByTestId("summary-keep")).toContainText("Data deletes on");
+  await shoot(h, "profile-summary-returning", { width: 1366, height: 768 });
+
+  const iv = pages.iv;
+  await iv.goto("/interview");
+  await expect(iv.locator("header")).toBeVisible();
+  await expect(iv.getByRole("combobox", { name: "Quick look: name or mobile" })).toHaveCount(0);
+  expect((await iv.request.get(`/api/quicklook?q=${encodeURIComponent("Rohit")}`)).status()).toBe(403);
 });

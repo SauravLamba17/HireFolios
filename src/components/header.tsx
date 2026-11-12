@@ -3,6 +3,7 @@ import { brand } from "@/lib/brand";
 import { getCompany } from "@/lib/company";
 import { can, ROLE_LABELS, type Permission, type Staff } from "@/lib/session";
 import { NavLinks } from "./nav-links";
+import { QuickLook } from "./quick-look";
 import { SignOutButton } from "./sign-out-button";
 
 // `also`: other paths that light up the link (a candidate profile belongs to Candidates).
@@ -42,6 +43,8 @@ export async function Header({ staff }: { staff: Staff }) {
           </span>
         </Link>
         <NavLinks links={links} />
+        {/* Phase 3.6 quick-look: HR, manager, admin only (never interviewers or the lobby TV) */}
+        {!staff.mustChangePassword && can(staff.role, "rediscovery") && <QuickLook />}
         <div className="ml-auto flex items-center gap-2">
           <Link
             href="/account/password"

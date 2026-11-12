@@ -128,5 +128,19 @@ export async function rediscoverySmoke(c: Ctx) {
     ["tag.add", "tag.remove", "suggestion.accept", "suggestion.dismiss"].every((a) => audits2.some((x) => x.action === a)) &&
       audits2.every((a) => !c.pii.some((p) => JSON.stringify(a.meta ?? {}).includes(p))),
   );
+
+  // ---------- C: quick-look ----------
+  const ql = async (who: Call, q: string) => {
+    const res = await who(`/api/quicklook?q=${encodeURIComponent(q)}`);
+    return { status: res.status, rows: res.ok ? ((await res.json()).rows as { id: string; name: string; mobile: string; line: string; tags: { code: string }[] }[]) : [] };
+  };
+  let q = await ql(hr, cc.mobile.slice(-4));
+  check("3.6 quick-look by 4 mobile digits finds the candidate with summary and tags", q.status === 200 && q.rows.some((x) => x.id === costCandidate && /Not hired/.test(x.line) && x.tags.some((t) => t.code === "high_cost")), q);
+  q = await ql(hr, "Smke Priya"); // typo
+  check("3.6 quick-look by a typo'd name", q.rows.some((x) => x.name === "Smoke Priya Sharma"), q.rows.map((x) => x.name));
+  check("3.6 quick-look: 1 letter or 3 digits → nothing", (await ql(hr, "S")).rows.length === 0 && (await ql(hr, "123")).rows.length === 0);
+  q = await ql(hrB, cc.mobile.slice(-4));
+  check("3.6 quick-look never shows another tenant's candidates", q.status === 200 && !q.rows.some((x) => x.id === costCandidate), q.rows.length);
+  check("3.6 quick-look: interviewer 403, lobby TV 403", (await iv("/api/quicklook?q=Smoke")).status === 403 && (await as("tv")("/api/quicklook?q=Smoke")).status === 403);
   return { costCandidate };
 }

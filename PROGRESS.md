@@ -374,7 +374,10 @@ Phase 3 (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is 
       threshold; never joined / Do not rehire / skill rejections / no scores), accept / dismiss (remembered per decision),
       `/dashboard/suggestions`, HR-only Do not rehire warning at intake lookup, score change between visits (`trend.ts`), profile
       Summary card (summary line, visits at a glance, tags, suggestions); e2e `rediscovery.spec.ts`
-- [ ] **C** — quick-look search, profile summary card
+- [x] **C** — header quick-look (HR / manager / admin; typo-tolerant names, 4+ mobile digits, 8 rows with summary line, score
+      change, tags; "/" focus, arrows, Enter, Esc; combobox ARIA; `GET /api/quicklook`), trigram index on mobile, profile Summary card
+      (who they are, visits at a glance, score change, data kept / deletes on), `scripts/perf-rediscovery.ts` (10k candidates:
+      quick-look 108 ms typo name, 100 ms 2 letters, 12 ms 4 digits)
 - [ ] **D** — contact log, cooling, templates, do not contact, call-backs, consent after the visit, keep period
 - [ ] **E** — pool, bulk ranking, hiring pushes
 - [ ] **F** — joining-risk hints, reports, demo data, docs, final regression
