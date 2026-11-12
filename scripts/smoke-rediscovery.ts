@@ -73,5 +73,60 @@ export async function rediscoverySmoke(c: Ctx) {
 
   const audits = await db.select().from(s.auditLog).where(eq(s.auditLog.tenantId, c.tenantA));
   check("3.6 audit rows (other offer, settings) hold ids and codes only", audits.some((a) => a.action === "other_offer.add") && audits.some((a) => a.action === "settings.update") && audits.every((a) => !c.pii.some((p) => JSON.stringify(a.meta ?? {}).includes(p))));
+
+  // ---------- B: suggestions, tags, do not rehire ----------
+  const red = (p: string, body: unknown) => hr(`/api/candidates/${p}/rediscovery`, json(body));
+  r = await hr(`/dashboard/candidates/${costCandidate}`);
+  const text = async (res: Response) => (await res.text()).replaceAll("<!-- -->", ""); // React text separators
+  let page = await text(r);
+  check("3.6 profile shows the suggestion and its reason", page.includes("Suggested tag: Good but high cost") && page.includes("Rejected for Cost: asked 4.2 vs 3.0 LPA (+40%) · avg 4.0 ≥ 3.5"), r.status);
+  r = await hr("/dashboard/suggestions");
+  page = await r.text();
+  check("3.6 suggestions page lists the candidate", r.status === 200 && page.includes(costCandidate), r.status);
+  check("3.6 interviewer can't open the suggestions page", (await iv("/dashboard/suggestions")).status === 307);
+  r = await red(costCandidate, { action: "suggestionAccept", tag: "high_cost", note: null });
+  let tags = await db.select().from(s.candidateTags).where(eq(s.candidateTags.candidateId, costCandidate));
+  check("3.6 accept → tag added from the suggestion (reason kept as note)", r.status === 200 && tags.length === 1 && tags[0].tagCode === "high_cost" && tags[0].source === "suggestion" && /asked 4\.2/.test(tags[0].note ?? ""), { status: r.status, tags });
+  r = await red(costCandidate, { action: "suggestionAccept", tag: "high_cost", note: null });
+  check("3.6 accepting again → 400 (no longer open)", r.status === 400, r.status);
+  r = await red(costCandidate, { action: "suggestionDismiss", tag: "near_miss", note: "seat filled anyway" });
+  const dis = await db.select().from(s.suggestionDismissals).where(eq(s.suggestionDismissals.candidateId, costCandidate));
+  check("3.6 dismiss → remembered for this decision", r.status === 200 && dis.length === 1 && dis[0].applicationId === waiting.id, { status: r.status, dis: dis.length });
+  page = await text(await hr(`/dashboard/candidates/${costCandidate}`));
+  check("3.6 dismissed suggestion stays away", !page.includes("Suggested tag: Near-miss"));
+  check("3.6 suggestions on another tenant's candidate → 404", (await hrB(`/api/candidates/${costCandidate}/rediscovery`, json({ action: "suggestionDismiss", tag: "near_miss", note: null }))).status === 404);
+
+  r = await red(costCandidate, { action: "tagAdd", code: "do_not_rehire", note: "" });
+  check("3.6 Do not rehire without a reason → 400", r.status === 400, r.status);
+  r = await red(costCandidate, { action: "tagAdd", code: "do_not_rehire", note: "Left without notice last time" });
+  check("3.6 Do not rehire with a reason", r.status === 200, await r.clone().json());
+  const [cc] = await db.select({ mobile: s.candidates.mobile }).from(s.candidates).where(eq(s.candidates.id, costCandidate));
+  const look = await (await hr(`/api/candidates/lookup?mobile=${cc.mobile}`)).json();
+  check("3.6 intake lookup carries the HR-only Do not rehire warning", look.doNotRehire?.reason === "Left without notice last time" && look.doNotRehire.by === "Smoke HR", look.doNotRehire);
+  page = await text(await hr(`/dashboard/candidates/${costCandidate}`));
+  check("3.6 no suggestions for a Do not rehire candidate", !page.includes("Suggested tag:"));
+  r = await red(costCandidate, { action: "tagAdd", code: "no_such_tag", note: null });
+  check("3.6 unknown tag → 400", r.status === 400, r.status);
+  const [undecided] = await db
+    .select({ id: s.applications.candidateId })
+    .from(s.applications)
+    .where(sql`${s.applications.tenantId} = ${c.tenantA} and ${s.applications.candidateId} not in (select candidate_id from applications where decided_at is not null)`)
+    .limit(1);
+  if (undecided) check("3.6 no tags before a decision → 400", (await red(undecided.id, { action: "tagAdd", code: "reconsider", note: null })).status === 400);
+  tags = await db.select().from(s.candidateTags).where(sql`${s.candidateTags.candidateId} = ${costCandidate} and ${s.candidateTags.removedAt} is null`);
+  const dnrTag = tags.find((t) => t.tagCode === "do_not_rehire")!;
+  r = await red(costCandidate, { action: "tagRemove", tagId: dnrTag.id, note: "" });
+  check("3.6 removing a tag needs a note → 400", r.status === 400, r.status);
+  r = await red(costCandidate, { action: "tagRemove", tagId: dnrTag.id, note: "Manager agreed to reconsider" });
+  const [removed] = await db.select().from(s.candidateTags).where(eq(s.candidateTags.id, dnrTag.id));
+  check("3.6 tag removed with the note kept as history", r.status === 200 && removed.removedAt !== null && removed.removeNote === "Manager agreed to reconsider", r.status);
+  const look2 = await (await hr(`/api/candidates/lookup?mobile=${cc.mobile}`)).json();
+  check("3.6 warning gone after removal", look2.doNotRehire === null, look2.doNotRehire);
+  const audits2 = await db.select().from(s.auditLog).where(eq(s.auditLog.tenantId, c.tenantA));
+  check(
+    "3.6 tag / suggestion actions audited with codes only",
+    ["tag.add", "tag.remove", "suggestion.accept", "suggestion.dismiss"].every((a) => audits2.some((x) => x.action === a)) &&
+      audits2.every((a) => !c.pii.some((p) => JSON.stringify(a.meta ?? {}).includes(p))),
+  );
   return { costCandidate };
 }

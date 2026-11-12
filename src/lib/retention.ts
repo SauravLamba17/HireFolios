@@ -59,3 +59,15 @@ export const DSR_DAYS = 90;
 export const dsrDueAt = (receivedAt: Date) => new Date(receivedAt.getTime() + DSR_DAYS * DAY_MS);
 export const dsrOverdue = (r: { dueAt: Date | null; status: string }, now: Date) =>
   r.dueAt !== null && r.dueAt.getTime() < now.getTime() && (r.status === "open" || r.status === "in_progress");
+
+/**
+ * What happens to a candidate's data, in words for HR (profile Summary card): kept as an employee, kept by
+ * talent-pool consent (until its keep period ends), kept while a visit is open, or deleted on a date.
+ */
+export function keepText(visits: { outcome: Outcome; purgeAfter: Date | null }[], pool: { inPool: boolean; until: Date | null }, fmt: (d: Date) => string): string {
+  if (visits.some((v) => v.outcome === "joined")) return "Kept (employee record)";
+  if (pool.inPool) return pool.until ? `Kept (talent-pool consent until ${fmt(pool.until)})` : "Kept (talent-pool consent)";
+  if (visits.length === 0) return "No visits";
+  if (visits.some((v) => v.purgeAfter === null)) return "Kept while a visit is open or undecided";
+  return `Data deletes on ${fmt(new Date(Math.max(...visits.map((v) => v.purgeAfter!.getTime()))))}`;
+}

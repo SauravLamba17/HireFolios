@@ -1,12 +1,15 @@
 // Loads what the pure rediscovery rules need (visits, scorecards, categories), always within one tenant.
 import "server-only";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
-import { applications, jobs, optionItems, rejectReasons, stages } from "@/db/schema";
+import { applications, candidateTags, jobs, optionItems, rejectReasons, stages, suggestionDismissals, users } from "@/db/schema";
 import type { OfferStatus, Outcome } from "@/lib/flow";
 import type { OptionLists } from "@/lib/lists";
 import { getOptionLists } from "@/lib/lists-db";
-import { CAT, isCategoryKind, type Category, type CategoryOption, type ReasonOption } from "@/lib/rediscovery/categories";
+import { CAT, isCategoryKind, TAG, type Category, type CategoryOption, type ReasonOption } from "@/lib/rediscovery/categories";
+import { getSettings } from "@/lib/rediscovery/settings-db";
+import { suggest, type Dismissal, type Suggestion } from "@/lib/rediscovery/suggest";
+import { scoreChange, type ScoreChange } from "@/lib/rediscovery/trend";
 import { summarize, type CardInput, type CandidateSummary, type VisitInput } from "@/lib/rediscovery/summary";
 
 type Q = typeof db | Tx;
@@ -140,4 +143,73 @@ export async function lastInterviewStageId(tenantId: string) {
     .orderBy(sql`${stages.position} desc`)
     .limit(1);
   return s?.id ?? null;
+}
+
+// ---------- tags and suggestions (sub-phase B) ----------
+
+export type TagRow = { id: string; candidateId: string; code: string; label: string; note: string | null; source: string; by: string | null; at: Date };
+
+/** Active tags of these candidates (one tenant), labels from Settings → Lists. */
+export async function activeTags(tenantId: string, candidateIds: string[], lists?: OptionLists): Promise<Map<string, TagRow[]>> {
+  const out = new Map<string, TagRow[]>(candidateIds.map((id) => [id, []]));
+  if (!candidateIds.length) return out;
+  const labels = tagLabels(lists ?? (await getOptionLists(tenantId)));
+  const rows = await db
+    .select({ id: candidateTags.id, candidateId: candidateTags.candidateId, code: candidateTags.tagCode, note: candidateTags.note, source: candidateTags.source, by: users.name, at: candidateTags.addedAt })
+    .from(candidateTags)
+    .leftJoin(users, eq(users.id, candidateTags.addedBy))
+    .where(and(eq(candidateTags.tenantId, tenantId), inArray(candidateTags.candidateId, candidateIds), isNull(candidateTags.removedAt)))
+    .orderBy(asc(candidateTags.addedAt));
+  for (const r of rows) out.get(r.candidateId)?.push({ ...r, label: labels.get(r.code) ?? r.code });
+  return out;
+}
+
+async function dismissalsOf(tenantId: string, candidateIds: string[]) {
+  const out = new Map<string, Dismissal[]>(candidateIds.map((id) => [id, []]));
+  if (!candidateIds.length) return out;
+  const rows = await db
+    .select({ candidateId: suggestionDismissals.candidateId, tag: suggestionDismissals.tagCode, applicationId: suggestionDismissals.applicationId, decidedAt: suggestionDismissals.decidedAt })
+    .from(suggestionDismissals)
+    .where(and(eq(suggestionDismissals.tenantId, tenantId), inArray(suggestionDismissals.candidateId, candidateIds)));
+  for (const r of rows) out.get(r.candidateId)?.push(r);
+  return out;
+}
+
+export type CandidateInsight = CandidateSummary & {
+  history: History;
+  tags: TagRow[];
+  suggestions: (Suggestion & { label: string })[];
+  suggestionNote: string | null;
+  change: ScoreChange | null;
+};
+
+/** Summary, tags, open suggestions and score change of these candidates, in one go (one tenant). */
+export async function insights(tenantId: string, candidateIds: string[]): Promise<Map<string, CandidateInsight>> {
+  const lists = await getOptionLists(tenantId);
+  const [sums, tags, dis, settings, lastRound] = await Promise.all([
+    summaries(tenantId, candidateIds, lists),
+    activeTags(tenantId, candidateIds, lists),
+    dismissalsOf(tenantId, candidateIds),
+    getSettings(tenantId),
+    lastInterviewStageId(tenantId),
+  ]);
+  const labels = tagLabels(lists);
+  const out = new Map<string, CandidateInsight>();
+  for (const id of candidateIds) {
+    const s = sums.get(id)!;
+    const t = tags.get(id) ?? [];
+    const { suggestions, note } = suggest({ summary: s, activeTags: t.map((x) => x.code), dismissals: dis.get(id) ?? [], threshold: settings.score_threshold, lastRoundStageId: lastRound });
+    out.set(id, { ...s, tags: t, suggestions: suggestions.map((x) => ({ ...x, label: labels.get(x.tag) ?? x.tag })), suggestionNote: note, change: scoreChange(s.visits) });
+  }
+  return out;
+}
+
+/** Do-not-rehire tag of one candidate (HR-only warning at intake lookup), or null. */
+export async function doNotRehireOf(tenantId: string, candidateId: string) {
+  const [r] = await db
+    .select({ note: candidateTags.note, by: users.name, at: candidateTags.addedAt })
+    .from(candidateTags)
+    .leftJoin(users, eq(users.id, candidateTags.addedBy))
+    .where(and(eq(candidateTags.tenantId, tenantId), eq(candidateTags.candidateId, candidateId), eq(candidateTags.tagCode, TAG.doNotRehire), isNull(candidateTags.removedAt)));
+  return r ?? null;
 }

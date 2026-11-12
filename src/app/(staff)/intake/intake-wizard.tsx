@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { cvFileKind, makeIntakeDetails, normalizeMobile, type IntakeResult, type LookupResult, type UploadLimits } from "@/lib/intake";
 import type { OptionLists } from "@/lib/lists";
-import { formatDayIST } from "@/lib/ist";
+import { formatDateIST, formatDayIST } from "@/lib/ist";
 import { contactText, NOTICE_LANGUAGES, renderNotice, type NoticeLanguage, type NoticeTexts } from "@/lib/notice";
 import { OUTCOME_LABELS } from "@/lib/options";
 import { Camera, type Shot } from "./camera";
@@ -386,6 +386,15 @@ export function IntakeWizard({
           )}
           {lookup?.found && (
             <div className="space-y-4">
+              {lookup.doNotRehire && (
+                <div role="alert" className="rounded-lg border-2 border-red-400 bg-red-50 px-4 py-3 text-red-900" data-testid="dnr-warning">
+                  <p className="font-semibold">Do not rehire (HR only)</p>
+                  <p>
+                    {lookup.doNotRehire.reason ?? "No reason given"} · by {lookup.doNotRehire.by ?? "a former staff member"} on {formatDateIST(new Date(lookup.doNotRehire.at))}.
+                    You may still register them: check with the hiring manager first.
+                  </p>
+                </div>
+              )}
               {lookup.cooldown && (
                 <div role="alert" className="rounded-lg border-2 border-red-300 bg-red-50 px-4 py-3 text-red-900">
                   <p className="font-semibold">Cooldown: rejected recently</p>

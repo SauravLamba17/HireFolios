@@ -4,6 +4,7 @@ import { applications, candidateFiles, candidates, jobs, stages, tenants } from 
 import { normalizeMobile, type LookupResult } from "@/lib/intake";
 import { todayIST } from "@/lib/ist";
 import { rupeesToLpa } from "@/lib/money";
+import { doNotRehireOf } from "@/lib/rediscovery/data";
 import { requireStaffApi } from "@/lib/session";
 import { audit } from "@/lib/staff";
 
@@ -20,7 +21,7 @@ export async function GET(req: Request) {
   const c = await db.query.candidates.findFirst({ where: and(eq(candidates.tenantId, tenantId), eq(candidates.mobile, mobile)) });
   if (!c) return Response.json({ found: false, mobile } satisfies LookupResult);
 
-  const [visits, [photo], [cooldown]] = await Promise.all([
+  const [visits, [photo], [cooldown], dnr] = await Promise.all([
     db
       .select({
         token: applications.token,
@@ -58,6 +59,7 @@ export async function GET(req: Request) {
       )
       .orderBy(desc(applications.tokenDate))
       .limit(1),
+    doNotRehireOf(tenantId, c.id),
   ]);
 
   await audit(db, { tenantId, actorUserId: staff.id, action: "candidate.lookup", entityType: "candidate", entityId: c.id });
@@ -91,5 +93,6 @@ export async function GET(req: Request) {
     visits: visits.map((v) => ({ token: v.token, day: v.day, job: v.job, stage: v.stage, outcome: v.outcome, rejectReason: v.rejectReason })),
     today: today ? { token: today.token, job: today.job } : null,
     cooldown: cooldown ?? null,
+    doNotRehire: dnr ? { reason: dnr.note, by: dnr.by, at: dnr.at.toISOString() } : null,
   } satisfies LookupResult);
 }

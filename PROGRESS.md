@@ -370,7 +370,10 @@ Phase 3 (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is 
       retired); category per reject reason (editor column); category + cost figures on interview reject, manager override and
       declined offer; other offers in hand (intake "More details", profile, history); hiring summary engine
       (`src/lib/rediscovery/summary.ts`) + `GET /api/candidates/[id]/summary`; permissions `rediscovery`, `contactUnblock`
-- [ ] **B** — tags, suggestions, do not rehire, score change
+- [x] **B** — tags (history, notes, remove with a note), suggestion rules (`suggest.ts`: Good but high cost, near-miss; inclusive
+      threshold; never joined / Do not rehire / skill rejections / no scores), accept / dismiss (remembered per decision),
+      `/dashboard/suggestions`, HR-only Do not rehire warning at intake lookup, score change between visits (`trend.ts`), profile
+      Summary card (summary line, visits at a glance, tags, suggestions); e2e `rediscovery.spec.ts`
 - [ ] **C** — quick-look search, profile summary card
 - [ ] **D** — contact log, cooling, templates, do not contact, call-backs, consent after the visit, keep period
 - [ ] **E** — pool, bulk ranking, hiring pushes

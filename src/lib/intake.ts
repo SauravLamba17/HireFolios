@@ -192,6 +192,8 @@ export type LookupResult =
       visits: { token: string; day: string; job: string; stage: string; outcome: string; rejectReason: string | null }[];
       today: { token: string; job: string } | null;
       cooldown: { until: string; reason: string | null } | null;
+      /** Phase 3.6: HR-only "Do not rehire" tag (reason, who, when). HR still decides; never on the consent screen. */
+      doNotRehire: { reason: string | null; by: string | null; at: string } | null;
     };
 
 /** First validation message; zod's generic ones get the field name so they can be traced. */

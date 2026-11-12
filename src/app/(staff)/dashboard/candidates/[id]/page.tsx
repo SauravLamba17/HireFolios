@@ -14,7 +14,10 @@ import { NOTICE_LANGUAGES } from "@/lib/notice";
 import { canViewCandidate } from "@/lib/access";
 import { DECISION_LABELS, experienceLabel, OFFER_STATUS_LABELS } from "@/lib/options";
 import { can, requireStaff } from "@/lib/session";
-import { categoryMap, categoryOf, categoryOptions, reasonOptions } from "@/lib/rediscovery/data";
+import { categoryMap, categoryOf, categoryOptions, insights, reasonOptions } from "@/lib/rediscovery/data";
+import { ageOn } from "@/lib/intake";
+import { keepText } from "@/lib/retention";
+import { SummaryCard } from "./summary-card";
 import { CorrectDetails, OfferForm, OtherOfferForm, OverrideForm, ResumeButton } from "./profile-actions";
 import { audit } from "@/lib/staff";
 
@@ -130,6 +133,7 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
       .orderBy(desc(otherOffers.notedOn), desc(otherOffers.createdAt)),
   ]);
   const cats = categoryMap(lists);
+  const insight = (await insights(tenantId, [id])).get(id)!;
   const canOverride = can(staff.role, "override");
   const canResume = can(staff.role, "resume");
   const canOffer = can(staff.role, "offer");
@@ -175,6 +179,21 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
           </p>
         </div>
       </section>
+
+      <SummaryCard
+        person={{ id: c.id, fullName: c.fullName, age: c.dateOfBirth ? ageOn(c.dateOfBirth, todayIST()) : null, city: c.city, qualification: c.qualification, certifications: c.certifications, ehrSoftware: c.ehrSoftware, experienceMonths: c.experienceMonths, languages: c.languages }}
+        insight={insight}
+        keep={keepText(visits, { inPool: Boolean(inPool), until: null }, formatDateIST)}
+        hr={
+          hrOnly
+            ? {
+                otherOffer: offersElsewhere[0] ?? null,
+                tagOptions: lists.rediscovery_tag.filter((t) => t.active && t.code).map((t) => ({ code: t.code!, label: t.label })),
+                facts: [],
+              }
+            : null
+        }
+      />
 
       <section className="card space-y-4" aria-labelledby="det-h">
         <h2 id="det-h" className="text-lg font-semibold">Details</h2>

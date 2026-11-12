@@ -61,6 +61,7 @@ export type VisitSummary = {
   decidedAt: Date | null;
   category: Category | null;
   reason: string | null; // "Cost: asked 4.2 vs budget 3.0 LPA (+40%)"
+  cost: { expected: number | null; budget: number | null }; // figures of a cost decision (rupees per year)
   line: string;
 };
 export type CandidateSummary = {
@@ -172,7 +173,7 @@ export function summarizeVisit(v: VisitInput, cards: CardInput[]): VisitSummary 
   }
   const open = status === "in_progress" || status === "on_hold"; // the head already names the stage
   const line = [head, open ? null : reached, scored].filter(Boolean).join(" · ");
-  return { id: v.id, day: v.day, job: v.job, outcome: v.outcome, status, statusLabel: label, rounds, avg, strongest, weakest, notes, decidedAt: v.decidedAt, category: v.category, reason, line };
+  return { id: v.id, day: v.day, job: v.job, outcome: v.outcome, status, statusLabel: label, rounds, avg, strongest, weakest, notes, decidedAt: v.decidedAt, category: v.category, reason, cost: { expected: v.costExpected, budget: v.costBudget }, line };
 }
 
 const FINAL: Outcome[] = ["selected", "joined", "rejected", "no_show", "withdrawn", "offer_declined"];

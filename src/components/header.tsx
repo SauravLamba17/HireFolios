@@ -6,11 +6,13 @@ import { NavLinks } from "./nav-links";
 import { SignOutButton } from "./sign-out-button";
 
 // `also`: other paths that light up the link (a candidate profile belongs to Candidates).
-const LINKS: { href: string; label: string; permission: Permission; also?: string }[] = [
+const LINKS: { href: string; label: string; permission: Permission; also?: string | string[] }[] = [
   { href: "/dashboard", label: "Candidates", permission: "candidates", also: "/dashboard/candidates/" },
   { href: "/intake", label: "+ New candidate", permission: "intake" },
   { href: "/dashboard/drive", label: "Drive", permission: "drive" },
   { href: "/interview", label: "Interview", permission: "interview" },
+  // Phase 3.6: one entry for the rediscovery pages (they share a tab bar)
+  { href: "/dashboard/suggestions", label: "Rediscovery", permission: "rediscovery", also: ["/dashboard/suggestions"] },
   { href: "/dashboard/reports", label: "Reports", permission: "reports" },
   { href: "/dashboard/privacy", label: "Privacy", permission: "privacy" },
   { href: "/dashboard/settings", label: "Settings", permission: "settings", also: "/dashboard/settings/" },
