@@ -403,3 +403,31 @@ test("F: offer with another offer in hand + long notice → two risk hints (prof
   await expect(rep.getByTestId("callbacks-report")).toContainText("done in the period: 1");
   await shoot(h, "reports-rediscovery", { width: 1366, height: 768 });
 });
+
+test("UI: Settings → Rediscovery and Lists (admin), Summary card for a new and a hired candidate", async ({ browser }) => {
+  const admin = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+  try {
+    await signIn(admin, who.admin);
+    await admin.goto("/dashboard/settings/rediscovery");
+    await expect(admin.getByRole("heading", { name: "Rediscovery", exact: true })).toBeVisible();
+    await expect(admin.getByText("Sample — confirm").first()).toBeVisible();
+    await expect(admin.getByLabel("Strong score (of 5)")).toHaveValue("3.5");
+    await shoot(admin, "settings-rediscovery", { width: 1440, height: 900 });
+    await admin.goto("/dashboard/settings/lists");
+    await expect(admin.getByRole("heading", { name: "Reject categories" })).toBeVisible();
+    await expect(admin.getByRole("heading", { name: "Rediscovery tags" })).toBeVisible();
+    await shoot(admin, "settings-lists", { width: 1440, height: 900 });
+  } finally {
+    await admin.context().close();
+  }
+  await person("N1", { name: `Neha New ${run}`, outcome: "in_progress", stageName: "Registered", cards: [], token: "R-70" });
+  const h = pages.hr;
+  await h.goto(`/dashboard/candidates/${people.N1.id}`);
+  await expect(h.getByTestId("summary-line")).toHaveText("In progress — Registered");
+  await shoot(h, "profile-summary-new", { width: 1366, height: 768 });
+  await sql`update applications set outcome = 'joined', joined_on = ${today}, offer_status = 'accepted', purge_after = null, photo_purge_after = null where id = ${people.S1.appId}`;
+  await h.goto(`/dashboard/candidates/${people.S1.id}`);
+  await expect(h.getByTestId("summary-line")).toContainText("Hired — joined");
+  await expect(h.getByTestId("summary-keep")).toHaveText("Kept (employee record)");
+  await shoot(h, "profile-summary-hired", { width: 1366, height: 768 });
+});

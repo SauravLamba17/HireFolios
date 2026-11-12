@@ -4,7 +4,9 @@ import { signIn } from "./helpers";
 // Supported browsers (Chrome, Edge) at the office screen sizes: key pages load, nothing scrolls sideways, and the
 // "please use Chrome or Edge" notice stays hidden. Run with PW_CHANNEL=chrome and PW_CHANNEL=msedge.
 const admin = { email: process.env.SEED_ADMIN_EMAIL!, password: process.env.SEED_ADMIN_PASSWORD! };
-const PAGES = ["/dashboard", "/intake", "/dashboard/drive", "/dashboard/reports", "/dashboard/settings", "/dashboard/settings/lists", "/dashboard/settings/notice", "/dashboard/settings/company", "/tv"];
+const PAGES = ["/dashboard", "/intake", "/dashboard/drive", "/dashboard/reports", "/dashboard/settings", "/dashboard/settings/lists", "/dashboard/settings/notice", "/dashboard/settings/company", "/tv",
+  // Phase 3.6 rediscovery
+  "/dashboard/pool", "/dashboard/bulk?needed=5&budget=4", "/dashboard/pushes", "/dashboard/suggestions", "/dashboard/callbacks", "/dashboard/joining", "/dashboard/settings/rediscovery"];
 
 for (const size of [{ width: 1366, height: 768 }, { width: 1920, height: 1080 }]) {
   test(`key pages at ${size.width}x${size.height} in ${process.env.PW_CHANNEL || "chromium"}`, async ({ browser }) => {
