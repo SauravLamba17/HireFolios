@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { brand } from "@/lib/brand";
+import { getCompany } from "@/lib/company";
 import { can, ROLE_LABELS, type Permission, type Staff } from "@/lib/session";
 import { NavLinks } from "./nav-links";
 import { SignOutButton } from "./sign-out-button";
@@ -12,12 +13,13 @@ const LINKS: { href: string; label: string; permission: Permission; also?: strin
   { href: "/interview", label: "Interview", permission: "interview" },
   { href: "/dashboard/reports", label: "Reports", permission: "reports" },
   { href: "/dashboard/privacy", label: "Privacy", permission: "privacy" },
-  { href: "/dashboard/settings", label: "Settings", permission: "settings" },
+  { href: "/dashboard/settings", label: "Settings", permission: "settings", also: "/dashboard/settings/" },
   { href: "/dashboard/users", label: "Staff", permission: "users" },
   { href: "/dashboard/audit", label: "Audit", permission: "audit" },
 ];
 
-export function Header({ staff }: { staff: Staff }) {
+export async function Header({ staff }: { staff: Staff }) {
+  const company = await getCompany(staff.tenantId); // Settings → Company
   // A temporary password unlocks nothing but the password page, so show no links yet.
   const links = staff.mustChangePassword
     ? []
@@ -25,9 +27,17 @@ export function Header({ staff }: { staff: Staff }) {
   return (
     <header className="border-b border-slate-200 bg-white">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2">
-        <Link href="/" className="flex h-12 items-center text-xl font-semibold tracking-tight text-blue-800">
-          <span className="sm:hidden">{brand.shortName}</span>
-          <span className="hidden sm:inline">{brand.name}</span>
+        <Link href="/" className="flex h-12 items-center gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element -- private file behind the session cookie */}
+          {company.logoUrl && <img src={company.logoUrl} alt="" className="h-9 max-w-20 object-contain" />}
+          <span className="flex flex-col leading-tight">
+            <span className="text-xl font-semibold tracking-tight text-blue-800">
+              <span className="sm:hidden">{brand.shortName}</span>
+              <span className="hidden sm:inline">{brand.name}</span>
+            </span>
+            {/* Settings → Company */}
+            <span className="max-w-40 truncate text-xs font-medium text-slate-600" data-testid="header-company">{company.shortName}</span>
+          </span>
         </Link>
         <NavLinks links={links} />
         <div className="ml-auto flex items-center gap-2">

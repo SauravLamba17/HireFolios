@@ -2,7 +2,11 @@ import type { Metadata } from "next";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { jobs, tenants } from "@/db/schema";
+import { getCompany } from "@/lib/company";
+import { uploadLimits } from "@/lib/config";
 import { uploadRoot } from "@/lib/files";
+import { getOptionLists } from "@/lib/lists-db";
+import { getActiveNotice } from "@/lib/notice-db";
 import { requireStaff } from "@/lib/session";
 import { IntakeWizard } from "./intake-wizard";
 
@@ -21,14 +25,27 @@ export default async function IntakePage() {
       </div>
     );
   }
-  const [tenant, openJobs] = await Promise.all([
+  const [tenant, openJobs, lists, notice, company] = await Promise.all([
     db.query.tenants.findFirst({ where: eq(tenants.id, staff.tenantId) }),
     db
       .select({ id: jobs.id, title: jobs.title })
       .from(jobs)
       .where(and(eq(jobs.tenantId, staff.tenantId), eq(jobs.status, "open")))
       .orderBy(asc(jobs.title)),
+    getOptionLists(staff.tenantId),
+    getActiveNotice(staff.tenantId),
+    getCompany(staff.tenantId),
   ]);
   if (!tenant) throw new Error("tenant missing");
-  return <IntakeWizard jobs={openJobs} company={tenant.name} photoDays={tenant.photoRetentionDays} dataDays={tenant.dataRetentionDays} />;
+  return (
+    <IntakeWizard
+      jobs={openJobs}
+      company={company.name}
+      photoDays={tenant.photoRetentionDays}
+      dataDays={tenant.dataRetentionDays}
+      lists={lists}
+      notice={{ version: notice.version, texts: notice.texts, contact: { name: notice.contactName, email: notice.contactEmail, phone: notice.contactPhone } }}
+      limits={uploadLimits()}
+    />
+  );
 }

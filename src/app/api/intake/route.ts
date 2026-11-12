@@ -4,14 +4,17 @@ import { db, isUniqueViolation } from "@/db";
 import { applications, candidateFiles, candidates, consents, dailyCounters, jobs, locations, stages } from "@/db/schema";
 import { searchTextFor } from "@/lib/candidate-search";
 import { DOCX, sniffType, storageKey, sha256, uploadRoot, writeFileUnder, type FileType } from "@/lib/files";
-import { firstIssue, IntakeRequest, MAX_CV_FILES, MAX_CV_PAGES, MAX_PAGE_BYTES, MAX_PHOTO_BYTES, MAX_UPLOAD_BYTES, type IntakeResult } from "@/lib/intake";
+import { getCompany } from "@/lib/company";
+import { uploadLimits } from "@/lib/config";
+import { firstIssue, makeIntakeRequest, type IntakeResult } from "@/lib/intake";
+import { getOptionLists } from "@/lib/lists-db";
+import { getActiveNotice } from "@/lib/notice-db";
 import { todayIST } from "@/lib/ist";
 import { publish } from "@/lib/live";
 import { lpaToRupees } from "@/lib/money";
 import { requireStaffApi } from "@/lib/session";
 import { audit } from "@/lib/staff";
 
-const MAX_REQUEST_BYTES = MAX_PHOTO_BYTES + MAX_CV_PAGES * MAX_PAGE_BYTES + MAX_CV_FILES * MAX_UPLOAD_BYTES + 256 * 1024;
 
 const bad = (error: string, status = 400) => Response.json({ error }, { status });
 
@@ -84,7 +87,9 @@ export async function POST(req: Request) {
   if (error) return error;
   const root = uploadRoot();
   if (!root) return bad("File storage is not set up on the server (UPLOAD_DIR). Ask your admin.", 500);
-  if (Number(req.headers.get("content-length") ?? 0) > MAX_REQUEST_BYTES) return bad("The upload is too large.", 413);
+  const L = uploadLimits();
+  const maxRequest = L.maxPhotoBytes + L.maxCvPages * L.maxPageBytes + L.maxCvFiles * L.maxUploadBytes + 256 * 1024;
+  if (Number(req.headers.get("content-length") ?? 0) > maxRequest) return bad("The upload is too large.", 413);
 
   let form: FormData;
   try {
@@ -98,30 +103,33 @@ export async function POST(req: Request) {
   } catch {
     return bad("Missing candidate details.");
   }
-  const parsed = IntakeRequest.safeParse(raw);
+  // List fields are checked against this tenant's active list items (Settings → Lists).
+  const [lists, notice, company] = await Promise.all([getOptionLists(staff.tenantId), getActiveNotice(staff.tenantId), getCompany(staff.tenantId)]);
+  const parsed = makeIntakeRequest(lists).safeParse(raw);
   if (!parsed.success) return bad(firstIssue(parsed.error));
   const { clientRequestId, mobile, details: d, consent } = parsed.data;
+  if (consent.noticeVersion !== notice.version) return bad("The privacy notice changed. Show it to the candidate again.");
 
   // A retry of a save that already went through (the browser lost the reply): same answer, nothing new.
   const done = await resultFor(staff.tenantId, clientRequestId);
   if (done) return Response.json(done);
 
-  const photo = await readUpload(form.get("photo"), MAX_PHOTO_BYTES, ["image/jpeg"], "The photo");
+  const photo = await readUpload(form.get("photo"), L.maxPhotoBytes, ["image/jpeg"], "The photo");
   if (photo === null) return bad("Take the candidate's photo first.");
   if (typeof photo === "string") return bad(photo);
   const uploads: Upload[] = [{ kind: "photo", pageNo: null, ...photo }];
 
   const pages = form.getAll("cvPage");
-  if (pages.length > MAX_CV_PAGES) return bad(`At most ${MAX_CV_PAGES} CV pages.`);
+  if (pages.length > L.maxCvPages) return bad(`At most ${L.maxCvPages} CV pages.`);
   for (const [i, p] of pages.entries()) {
-    const page = await readUpload(p, MAX_PAGE_BYTES, ["image/jpeg"], `CV page ${i + 1}`);
+    const page = await readUpload(p, L.maxPageBytes, ["image/jpeg"], `CV page ${i + 1}`);
     if (typeof page === "string") return bad(page);
     if (page) uploads.push({ kind: "cv_page", pageNo: i + 1, ...page });
   }
   const cvFiles = form.getAll("cvFile");
-  if (cvFiles.length > MAX_CV_FILES) return bad(`At most ${MAX_CV_FILES} CV files.`);
+  if (cvFiles.length > L.maxCvFiles) return bad(`At most ${L.maxCvFiles} CV files.`);
   for (const [i, f] of cvFiles.entries()) {
-    const file = await readUpload(f, MAX_UPLOAD_BYTES, ["application/pdf", DOCX, "image/jpeg", "image/png", "image/webp"], cvFiles.length > 1 ? `CV file ${i + 1}` : "The CV file");
+    const file = await readUpload(f, L.maxUploadBytes, ["application/pdf", DOCX, "image/jpeg", "image/png", "image/webp"], cvFiles.length > 1 ? `CV file ${i + 1}` : "The CV file");
     if (typeof file === "string") return bad(file);
     if (file) uploads.push({ kind: "cv_upload", pageNo: null, ...file });
   }
@@ -182,7 +190,7 @@ export async function POST(req: Request) {
         .values({ tenantId: tenant, counterDate: today, lastValue: 1 })
         .onConflictDoUpdate({ target: [dailyCounters.tenantId, dailyCounters.counterDate], set: { lastValue: sql`${dailyCounters.lastValue} + 1` } })
         .returning({ n: dailyCounters.lastValue });
-      const token = `A-${String(counter.n).padStart(3, "0")}`;
+      const token = `${company.tokenPrefix}-${String(counter.n).padStart(3, "0")}`; // prefix: Settings → Company
 
       const [app] = await tx
         .insert(applications)
@@ -209,7 +217,8 @@ export async function POST(req: Request) {
         tenantId: tenant,
         candidateId: cand.id,
         applicationId: app.id,
-        noticeVersion: consent.noticeVersion,
+        noticeVersion: notice.version,
+        noticeId: notice.id,
         language: consent.language,
         talentPool: consent.talentPool,
         whatsapp: consent.whatsapp,

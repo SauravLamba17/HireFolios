@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { dataExports } from "@/db/schema";
 import { parseFilters, searchCandidates } from "@/lib/candidate-search";
+import { exportCompany } from "@/lib/company";
 import { CANDIDATE_COLUMNS, DRIVE_COLUMNS, JOINED_COLUMNS, sheet, toCsv, toXlsx, type DriveExportRow, type JoinedExportRow } from "@/lib/exports";
 import { formatDateTimeIST, todayIST } from "@/lib/ist";
 import { OUTCOME_LABELS } from "@/lib/options";
@@ -20,6 +21,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ kind: st
   const url = new URL(req.url);
   const q = Object.fromEntries(url.searchParams);
   const tenantId = staff.tenantId;
+  const company = await exportCompany(tenantId); // Settings → Company
   let body: Uint8Array | string;
   let rows = 0;
   let filename = "";
@@ -31,7 +33,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ kind: st
     const { rows: list } = await searchCandidates(f, tenantId, { all: true });
     rows = list.length;
     filters = Object.fromEntries(Object.entries(f).filter(([k, v]) => k !== "page" && v !== undefined && v !== "").map(([k, v]) => [k, String(v)]));
-    body = await toXlsx([sheet("Candidates", CANDIDATE_COLUMNS, list)]);
+    body = await toXlsx([sheet("Candidates", CANDIDATE_COLUMNS, list)], company);
     filename = `candidates-${todayIST()}.xlsx`;
   } else if (kind === "drive") {
     const date = /^\d{4}-\d{2}-\d{2}$/.test(q.date ?? "") ? q.date! : todayIST();
@@ -59,7 +61,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ kind: st
     body = await toXlsx([
       { name: "Summary", headers: ["", date], widths: [22, 22], rows: summary.map((r) => [r.k, r.v]) },
       sheet("Candidates", DRIVE_COLUMNS, list),
-    ]);
+    ], company);
     filename = `drive-${date}.xlsx`;
   } else if (kind === "joined") {
     const list = [
@@ -72,7 +74,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ kind: st
     rows = list.length;
     const csv = q.format === "csv";
     filters = { format: csv ? "csv" : "xlsx" };
-    body = csv ? toCsv(JOINED_COLUMNS, list) : await toXlsx([sheet("Joined", JOINED_COLUMNS, list)]);
+    body = csv ? toCsv(JOINED_COLUMNS, list) : await toXlsx([sheet("Joined", JOINED_COLUMNS, list)], company);
     type = csv ? "text/csv; charset=utf-8" : XLSX;
     filename = `joined-employees-${todayIST()}.${csv ? "csv" : "xlsx"}`;
   } else {

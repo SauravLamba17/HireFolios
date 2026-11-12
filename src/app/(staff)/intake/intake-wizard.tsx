@@ -1,10 +1,11 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { cvFileKind, IntakeDetails, MAX_CV_FILES, MAX_CV_PAGES, MAX_UPLOAD_BYTES, normalizeMobile, type IntakeResult, type LookupResult } from "@/lib/intake";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { cvFileKind, makeIntakeDetails, normalizeMobile, type IntakeResult, type LookupResult, type UploadLimits } from "@/lib/intake";
+import type { OptionLists } from "@/lib/lists";
 import { formatDayIST } from "@/lib/ist";
-import { NOTICE_LANGUAGES, NOTICE_VERSION, noticeText, type NoticeLanguage } from "@/lib/notice";
+import { contactText, NOTICE_LANGUAGES, renderNotice, type NoticeLanguage, type NoticeTexts } from "@/lib/notice";
 import { OUTCOME_LABELS } from "@/lib/options";
 import { Camera, type Shot } from "./camera";
 import { DetailsForm, detailsFromPrefill, emptyDetails, toDetailsInput, type DetailsState, type Job } from "./details-form";
@@ -38,7 +39,28 @@ function uuid() {
 
 const shot = (blob: Blob): Shot => ({ blob, url: URL.createObjectURL(blob) });
 
-export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job[]; company: string; photoDays: number; dataDays: number }) {
+type ActiveNotice = { version: string; texts: NoticeTexts; contact: { name: string | null; email: string | null; phone: string | null } };
+
+export function IntakeWizard({
+  jobs,
+  company,
+  photoDays,
+  dataDays,
+  lists,
+  notice,
+  limits,
+}: {
+  jobs: Job[];
+  company: string;
+  photoDays: number;
+  dataDays: number;
+  lists: OptionLists;
+  notice: ActiveNotice;
+  limits: UploadLimits;
+}) {
+  const detailsSchema = useMemo(() => makeIntakeDetails(lists), [lists]);
+  const { maxCvFiles: MAX_CV_FILES, maxCvPages: MAX_CV_PAGES, maxUploadBytes: MAX_UPLOAD_BYTES } = limits;
+  const mb = Math.round(MAX_UPLOAD_BYTES / 1024 / 1024);
   const [step, setStep] = useState<Step>("mobile");
   const [maxStep, setMaxStep] = useState(0);
 
@@ -200,7 +222,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
         if (lookup?.mobile !== found.mobile) {
           // Another person: start their form from scratch (or from their saved profile).
           clearFiles();
-          setDetails(found.found ? detailsFromPrefill(found.prefill, jobs) : emptyDetails());
+          setDetails(found.found ? detailsFromPrefill(found.prefill, jobs, lists) : emptyDetails());
           setErrors({});
           setConsent(noConsent());
           setConsentStage("handover");
@@ -216,7 +238,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
   }
 
   function onDetailsNext() {
-    const parsed = IntakeDetails.safeParse(toDetailsInput(details));
+    const parsed = detailsSchema.safeParse(toDetailsInput(details));
     if (parsed.success) {
       setErrors({});
       setConsentStage(consent.agreed ? "handback" : "handover");
@@ -234,7 +256,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
     const problems: string[] = [];
     const ok = incoming.filter((f) => {
       if (!cvFileKind(f)) problems.push(`${f.name}: use PDF, Word (.docx), JPEG, PNG or WebP`);
-      else if (f.size > MAX_UPLOAD_BYTES) problems.push(`${f.name}: larger than 8 MB`);
+      else if (f.size > MAX_UPLOAD_BYTES) problems.push(`${f.name}: larger than ${mb} MB`);
       else return true;
       return false;
     });
@@ -255,7 +277,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
         clientRequestId: requestId,
         mobile: lookup.mobile,
         details: toDetailsInput(details),
-        consent: { ...consent, noticeVersion: NOTICE_VERSION },
+        consent: { ...consent, noticeVersion: notice.version },
       }),
     );
     fd.set("photo", photo.blob, "photo.jpg");
@@ -288,7 +310,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
   }
 
   const job = jobs.find((j) => j.id === details.jobId);
-  const text = noticeText(consent.language, { company, photoDays, dataDays });
+  const text = renderNotice(notice.texts[consent.language], { company, photoDays, dataDays, contact: contactText(consent.language, notice.contact) });
   const cur = indexOf(step);
 
   const nav = (back: Step | null, next: React.ReactNode) => (
@@ -459,6 +481,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
             }}
             errors={errors}
             jobs={jobs}
+            lists={lists}
           />
           {nav(
             "mobile",
@@ -544,7 +567,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
                 <button type="button" onClick={() => setConsentStage("refused")} className="btn btn-secondary w-full">
                   {consent.language === "hi" ? "मैं सहमत नहीं हूँ" : "I do not agree"}
                 </button>
-                <p className="text-center text-xs text-slate-400">Notice {NOTICE_VERSION}</p>
+                <p className="text-center text-xs text-slate-400">Notice {notice.version}</p>
               </form>
             )}
             {consentStage === "handback" && (
@@ -616,7 +639,7 @@ export function IntakeWizard({ jobs, company, photoDays, dataDays }: { jobs: Job
             className={`rounded-xl border-2 border-dashed p-6 text-center ${dragOver ? "border-blue-600 bg-blue-50" : "border-slate-300 bg-slate-50"}`}
           >
             <p className="text-lg font-medium">Drop CV files here</p>
-            <p className="text-sm text-slate-600">PDF, Word (.docx) or images · up to {MAX_CV_FILES} files · 8 MB each</p>
+            <p className="text-sm text-slate-600">PDF, Word (.docx) or images · up to {MAX_CV_FILES} files · {mb} MB each</p>
             <button type="button" onClick={() => pickFiles.current?.click()} className="btn btn-primary mt-3">
               Upload CV files…
             </button>

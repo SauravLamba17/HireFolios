@@ -3,7 +3,7 @@
 import "server-only";
 import ExcelJS from "exceljs";
 import { experienceLabel, OUTCOME_LABELS } from "@/lib/options";
-import { formatDayIST } from "@/lib/ist";
+import { formatDateTimeIST, formatDayIST } from "@/lib/ist";
 import { rupeesToLpa } from "@/lib/money";
 
 export type Column<T> = { header: string; width: number; value: (row: T) => string | number | null };
@@ -119,15 +119,33 @@ export const sheet = <T>(name: string, columns: Column<T>[], rows: T[]): Sheet =
   rows: sheetRows(columns, rows),
 });
 
-export async function toXlsx(sheets: Sheet[]): Promise<Uint8Array> {
+/** Company shown in the file (Settings → Company): workbook properties, print header, and a last "Company" sheet. */
+export type ExportCompany = { name: string; logo?: { data: Uint8Array; extension: "png" | "jpeg" } };
+
+export async function toXlsx(sheets: Sheet[], company?: ExportCompany): Promise<Uint8Array> {
   const wb = new ExcelJS.Workbook();
   wb.created = new Date();
+  if (company) wb.company = company.name;
   for (const sh of sheets) {
     const ws = wb.addWorksheet(sh.name);
+    // "&" starts a header code in Excel: write it as "&&"
+    if (company) ws.headerFooter.oddHeader = `&L${company.name.replace(/&/g, "&&")}&R&D &T`;
     ws.columns = sh.headers.map((header, i) => ({ header, width: sh.widths[i] }));
     ws.getRow(1).font = { bold: true };
     ws.views = [{ state: "frozen", ySplit: 1 }];
     for (const r of sh.rows) ws.addRow(r); // plain values: text stays text, never a formula
+  }
+  if (company) {
+    const ws = wb.addWorksheet("Company");
+    ws.getColumn(1).width = 60;
+    if (company.logo) {
+      const img = wb.addImage({ buffer: Buffer.from(company.logo.data) as unknown as ExcelJS.Buffer, extension: company.logo.extension });
+      ws.addImage(img, { tl: { col: 0, row: 0 }, ext: { width: 200, height: 80 } });
+      ws.getRow(1).height = 64;
+    }
+    ws.getCell("A2").value = company.name;
+    ws.getCell("A2").font = { bold: true, size: 14 };
+    ws.getCell("A3").value = `Exported ${formatDateTimeIST(new Date())}`;
   }
   return new Uint8Array(await wb.xlsx.writeBuffer());
 }

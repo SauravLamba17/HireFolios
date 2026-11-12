@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { LiveRefresh } from "@/components/live-refresh";
-import { brand } from "@/lib/brand";
+import { getCompany } from "@/lib/company";
 import { lobbyState } from "@/lib/drive";
 import { requireStaff } from "@/lib/session";
 import { Chime, Clock } from "./tv-parts";
@@ -11,13 +11,17 @@ export const metadata: Metadata = { title: "Lobby" };
 // Sign in on the TV with a "Lobby TV (display)" account, which can open this page and nothing else.
 export default async function TvPage() {
   const staff = await requireStaff("tv");
-  const { calls, waiting, drive } = await lobbyState(staff.tenantId);
+  const [{ calls, waiting, drive }, company] = await Promise.all([lobbyState(staff.tenantId), getCompany(staff.tenantId)]);
   const [now, ...previous] = calls;
   return (
     <main className="flex min-h-dvh flex-col bg-white px-12 py-8 text-slate-900">
       <LiveRefresh quiet />
       <header className="flex items-center justify-between text-4xl font-semibold text-blue-800">
-        <span>{brand.name}</span>
+        <span className="flex items-center gap-6" data-testid="tv-company">
+          {/* eslint-disable-next-line @next/next/no-img-element -- private file behind the session cookie */}
+          {company.logoUrl && <img src={company.logoUrl} alt="" className="h-20 max-w-80 object-contain" />}
+          <span>{company.name}</span>
+        </span>
         <span className="text-slate-700">
           <Clock />
         </span>
