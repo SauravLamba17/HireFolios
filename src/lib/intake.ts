@@ -1,13 +1,11 @@
 // Intake rules shared by the intake wizard (browser) and POST /api/intake (server). No server imports here.
 import { z } from "zod";
 import { todayIST } from "@/lib/ist";
-import { NOTICE_VERSION } from "@/lib/notice";
-import { CERTIFICATIONS, CODING_SPECIALTIES, EDUCATION, EHR_SOFTWARE, LANGUAGES, NOTICE_PERIODS, SOURCES } from "@/lib/options";
+import { activeLabels, type OptionLists } from "@/lib/lists";
 
 export const MIN_AGE = 18;
-export const MAX_CV_PAGES = 10;
-export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // each uploaded CV file
-export const MAX_CV_FILES = 5;
+// Upload limits come from the server's configuration (src/lib/config.ts) and are handed to the wizard as props.
+export type UploadLimits = { maxCvFiles: number; maxCvPages: number; maxUploadBytes: number; maxPageBytes: number; maxPhotoBytes: number };
 export const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 /** What kind of CV file HR picked (by type or, if the browser gives none, by extension). The server re-checks the bytes. */
@@ -18,8 +16,6 @@ export function cvFileKind(f: { name: string; type: string }): "pdf" | "docx" | 
   if (/^image\/(jpeg|png|webp)$/.test(f.type) || (!f.type && ["jpg", "jpeg", "png", "webp"].includes(ext))) return "image";
   return null;
 }
-export const MAX_PAGE_BYTES = 4 * 1024 * 1024; // one photographed CV page (~1800px JPEG)
-export const MAX_PHOTO_BYTES = 2 * 1024 * 1024; // live photo (~800px JPEG)
 
 /** Indian mobile → 10 digits starting 6-9, or null. Accepts +91 / 0091 / 91 / leading 0, spaces, dashes. */
 export function normalizeMobile(raw: string): string | null {
@@ -54,10 +50,12 @@ const text = (max: number, msg: string) =>
     .nullable()
     .transform((v) => v || null);
 
-const pickMany = <T extends readonly [string, ...string[]]>(list: T, what: string) =>
+// List fields accept only the tenant's active items (Settings → Lists).
+const pickOne = (list: string[], msg: string) => z.string(msg).refine((v) => list.includes(v), msg);
+const pickMany = (list: string[], what: string) =>
   z
-    .array(z.enum(list, `Unknown ${what}`))
-    .max(list.length)
+    .array(z.string().refine((v) => list.includes(v), `Unknown ${what}`))
+    .max(Math.max(list.length, 1))
     .transform((v) => [...new Set(v)]);
 
 const lpa = (what: string) =>
@@ -73,7 +71,8 @@ export const Mobile = z.string("Enter the mobile number").transform((v, ctx) => 
   return m ?? z.NEVER;
 });
 
-export const IntakeDetails = z.object({
+// Fields that do not depend on the lists (also used to correct a candidate's identity on the profile).
+export const BaseDetails = z.object({
   jobId: z.uuid("Choose a position"),
   fullName: z.string("Enter the full name").trim().min(2, "Enter the full name").max(100, "Name is too long"),
   dateOfBirth: z
@@ -91,44 +90,51 @@ export const IntakeDetails = z.object({
     .nullable()
     .transform((v) => v || null),
   city: z.string("Enter the city").trim().min(2, "Enter the city").max(100, "City is too long"),
-  education: z.enum(EDUCATION, "Choose the education"),
   experienceYears: z.int("Choose years of experience").min(0).max(45),
   experienceMonths: z.int("Choose months of experience").min(0).max(11),
   currentCtcLpa: lpa("Current CTC"),
   expectedCtcLpa: lpa("Expected CTC"),
-  noticeDays: z
-    .int("Choose the notice period")
-    .refine((d) => NOTICE_PERIODS.some((n) => n.days === d), "Choose the notice period"),
-  languages: pickMany(LANGUAGES, "language"),
-  source: z.enum(SOURCES, "Choose how they heard about us"),
   hrNotes: text(1000, "HR notes are too long (1000 characters max)"),
-  certifications: pickMany(CERTIFICATIONS, "certification"),
-  codingSpecialties: pickMany(CODING_SPECIALTIES, "coding specialty"),
-  ehrSoftware: pickMany(EHR_SOFTWARE, "software"),
   nightShiftOk: z.boolean("Answer: OK with night / US shift?"),
   voiceProcess: z.boolean("Answer: OK with voice process (calls)?"),
   typingWpm: z.int("Typing speed must be a whole number").min(1, "Typing speed must be 1 to 250 WPM").max(250, "Typing speed must be 1 to 250 WPM").nullable(),
   skills: text(500, "Skills are too long (500 characters max)"),
 });
 
+/** Intake details, checked against this tenant's active list items. */
+export function makeIntakeDetails(lists: OptionLists) {
+  const days = lists.notice_period.filter((n) => n.active && n.days !== null).map((n) => n.days!);
+  return BaseDetails.extend({
+    education: pickOne(activeLabels(lists, "education"), "Choose the education"),
+    noticeDays: z.int("Choose the notice period").refine((d) => days.includes(d), "Choose the notice period"),
+    languages: pickMany(activeLabels(lists, "language"), "language"),
+    source: pickOne(activeLabels(lists, "source"), "Choose how they heard about us"),
+    certifications: pickMany(activeLabels(lists, "certification"), "certification"),
+    codingSpecialties: pickMany(activeLabels(lists, "coding_specialty"), "coding specialty"),
+    ehrSoftware: pickMany(activeLabels(lists, "ehr_software"), "software"),
+  });
+}
+
 export const Consent = z.object({
   agreed: z.literal(true, "Candidate consent is required"),
   language: z.enum(["en", "hi"]),
-  noticeVersion: z.literal(NOTICE_VERSION, "The privacy notice changed. Show it to the candidate again."),
+  // Compared with the active notice by the server (POST /api/intake).
+  noticeVersion: z.string().min(1),
   talentPool: z.boolean(),
   whatsapp: z.boolean(),
 });
 
-export const IntakeRequest = z.object({
-  clientRequestId: z.uuid(),
-  mobile: Mobile,
-  details: IntakeDetails,
-  consent: Consent,
-});
+export const makeIntakeRequest = (lists: OptionLists) =>
+  z.object({
+    clientRequestId: z.uuid(),
+    mobile: Mobile,
+    details: makeIntakeDetails(lists),
+    consent: Consent,
+  });
 
-export type IntakeDetailsInput = z.input<typeof IntakeDetails>;
-export type IntakeRequestInput = z.input<typeof IntakeRequest>;
-export type IntakeRequestData = z.output<typeof IntakeRequest>;
+export type IntakeDetailsInput = z.input<ReturnType<typeof makeIntakeDetails>>;
+export type IntakeRequestInput = z.input<ReturnType<typeof makeIntakeRequest>>;
+export type IntakeRequestData = z.output<ReturnType<typeof makeIntakeRequest>>;
 
 /** What POST /api/intake returns (also for a retried request). */
 export type IntakeResult = {

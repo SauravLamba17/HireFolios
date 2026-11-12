@@ -3,6 +3,8 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, jobs, locations, rejectReasons, stages, tenants } from "@/db/schema";
 import { formatDateTimeIST } from "@/lib/ist";
+import { activeLabels } from "@/lib/lists";
+import { getOptionLists } from "@/lib/lists-db";
 import { planPurge } from "@/lib/purge";
 import { requireStaff } from "@/lib/session";
 import { DriveSettings } from "./drive-settings";
@@ -13,7 +15,7 @@ export const metadata: Metadata = { title: "Settings" };
 
 export default async function SettingsPage() {
   const staff = await requireStaff("settings");
-  const [jobRows, locationRows, stageRows, reasonRows, [tenant], [lastRun], preview] = await Promise.all([
+  const [jobRows, locationRows, stageRows, reasonRows, [tenant], [lastRun], preview, lists] = await Promise.all([
     db
       .select({
         id: jobs.id,
@@ -53,10 +55,11 @@ export default async function SettingsPage() {
       .limit(1),
     // Dry run: what the deletion job would remove if it ran 7 days from now.
     planPurge(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), staff.tenantId),
+    getOptionLists(staff.tenantId),
   ]);
   return (
     <div className="space-y-8">
-      <SettingsManager jobs={jobRows} locations={locationRows} />
+      <SettingsManager jobs={jobRows} locations={locationRows} certifications={activeLabels(lists, "certification")} />
       <DriveSettings stages={stageRows} reasons={reasonRows} avgMinutes={tenant?.avg ?? null} />
       <RetentionSettings
         cooldownDays={tenant.cooldown}

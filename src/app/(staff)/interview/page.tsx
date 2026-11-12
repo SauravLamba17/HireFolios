@@ -8,8 +8,10 @@ import { Elapsed } from "@/components/elapsed";
 import { LiveRefresh } from "@/components/live-refresh";
 import { stageList, todayDrive } from "@/lib/drive";
 import { formatDateTimeIST, formatDayIST } from "@/lib/ist";
+import { noticeLabelFrom } from "@/lib/lists";
+import { getOptionLists } from "@/lib/lists-db";
 import { formatLpa } from "@/lib/money";
-import { DECISION_LABELS, experienceLabel, noticeLabel } from "@/lib/options";
+import { DECISION_LABELS, experienceLabel } from "@/lib/options";
 import { requireStaff } from "@/lib/session";
 import { InterviewForm, StatusToggle } from "./interview-form";
 
@@ -19,6 +21,7 @@ const yesNo = (v: boolean | null) => (v === null ? "—" : v ? "Yes" : "No");
 
 export default async function InterviewPage() {
   const staff = await requireStaff("interview");
+  const lists = await getOptionLists(staff.tenantId);
   const drive = await todayDrive(db, staff.tenantId);
   const [panel] = await db
     .select({ id: panels.id, name: panels.name, status: panels.status, stageId: panels.stageId })
@@ -127,7 +130,7 @@ export default async function InterviewPage() {
                   ["Experience", experienceLabel(app.c.experienceMonths) ?? "—"],
                   ["Education", app.c.qualification ?? "—"],
                   ["City", app.c.city ?? "—"],
-                  ["Notice", noticeLabel(app.c.noticeDays) ?? "—"],
+                  ["Notice", noticeLabelFrom(lists, app.c.noticeDays) ?? "—"],
                   ["Current CTC", formatLpa(app.c.currentCtc) ?? "—"],
                   ["Expected CTC", formatLpa(app.c.expectedCtc) ?? "—"],
                   ["Certifications", app.c.certifications.join(", ") || "—"],

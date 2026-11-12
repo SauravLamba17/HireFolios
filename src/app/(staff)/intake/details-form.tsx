@@ -2,7 +2,8 @@
 
 import { Chips } from "@/components/chips";
 import { latestAdultDob, type IntakeDetailsInput, type Prefill } from "@/lib/intake";
-import { CERTIFICATIONS, CODING_SPECIALTIES, EDUCATION, EHR_SOFTWARE, isCodingJob, LANGUAGES, NOTICE_PERIODS, SOURCES } from "@/lib/options";
+import { activeLabels, type OptionLists } from "@/lib/lists";
+import { isCodingJob } from "@/lib/options";
 
 export type Job = { id: string; title: string };
 
@@ -57,8 +58,11 @@ export const emptyDetails = (): DetailsState => ({
 
 const str = (v: string | number | null) => (v === null ? "" : String(v));
 
-/** Returning candidate: everything saved last time, and the last position if it is still open. */
-export function detailsFromPrefill(p: Prefill, openJobs: Job[]): DetailsState {
+/** Returning candidate: everything saved last time, and the last position if it is still open. List values that
+ * are no longer offered (retired in Settings → Lists) are left out: they stay on the old record, HR picks again. */
+export function detailsFromPrefill(p: Prefill, openJobs: Job[], lists: OptionLists): DetailsState {
+  const keep = (vals: string[], key: Parameters<typeof activeLabels>[1]) => vals.filter((v) => activeLabels(lists, key).includes(v));
+  const days = lists.notice_period.filter((n) => n.active).map((n) => n.days);
   return {
     ...emptyDetails(),
     jobId: openJobs.some((j) => j.id === p.lastJobId) ? (p.lastJobId ?? "") : "",
@@ -66,16 +70,16 @@ export function detailsFromPrefill(p: Prefill, openJobs: Job[]): DetailsState {
     dateOfBirth: p.dateOfBirth ?? "",
     email: p.email ?? "",
     city: p.city ?? "",
-    education: (EDUCATION as readonly string[]).includes(p.education ?? "") ? p.education! : "",
+    education: activeLabels(lists, "education").includes(p.education ?? "") ? p.education! : "",
     experienceYears: p.experienceMonths === null ? "" : String(Math.floor(p.experienceMonths / 12)),
     experienceMonths: p.experienceMonths === null ? "" : String(p.experienceMonths % 12),
     currentCtcLpa: str(p.currentCtcLpa),
     expectedCtcLpa: str(p.expectedCtcLpa),
-    noticeDays: str(p.noticeDays),
-    languages: p.languages,
-    certifications: p.certifications,
-    codingSpecialties: p.codingSpecialties,
-    ehrSoftware: p.ehrSoftware,
+    noticeDays: days.includes(p.noticeDays) ? str(p.noticeDays) : "",
+    languages: keep(p.languages, "language"),
+    certifications: keep(p.certifications, "certification"),
+    codingSpecialties: keep(p.codingSpecialties, "coding_specialty"),
+    ehrSoftware: keep(p.ehrSoftware, "ehr_software"),
     nightShiftOk: p.nightShiftOk,
     voiceProcess: p.voiceProcess,
     typingWpm: str(p.typingWpm),
@@ -98,12 +102,6 @@ export function toDetailsInput(d: DetailsState): IntakeDetailsInput {
     typingWpm: optNum(d.typingWpm),
     nightShiftOk: d.nightShiftOk as boolean,
     voiceProcess: d.voiceProcess as boolean,
-    education: d.education as IntakeDetailsInput["education"],
-    source: d.source as IntakeDetailsInput["source"],
-    languages: d.languages as IntakeDetailsInput["languages"],
-    certifications: d.certifications as IntakeDetailsInput["certifications"],
-    codingSpecialties: d.codingSpecialties as IntakeDetailsInput["codingSpecialties"],
-    ehrSoftware: d.ehrSoftware as IntakeDetailsInput["ehrSoftware"],
   };
 }
 
@@ -148,12 +146,21 @@ export function DetailsForm({
   onChange,
   errors,
   jobs,
+  lists,
 }: {
   value: DetailsState;
   onChange: (patch: Partial<DetailsState>) => void;
   errors: Record<string, string>;
   jobs: Job[];
+  lists: OptionLists;
 }) {
+  const EDUCATION = activeLabels(lists, "education");
+  const SOURCES = activeLabels(lists, "source");
+  const LANGUAGES = activeLabels(lists, "language");
+  const CERTIFICATIONS = activeLabels(lists, "certification");
+  const CODING_SPECIALTIES = activeLabels(lists, "coding_specialty");
+  const EHR_SOFTWARE = activeLabels(lists, "ehr_software");
+  const NOTICE_PERIODS = lists.notice_period.filter((n) => n.active && n.days !== null);
   const set = <K extends keyof DetailsState>(k: K) => (v: DetailsState[K]) => onChange({ [k]: v } as Partial<DetailsState>);
   const input = (k: keyof DetailsState) => ({
     id: k,
@@ -236,7 +243,7 @@ export function DetailsForm({
           <Field id="noticeDays" label="Notice period" error={errors.noticeDays}>
             <select {...input("noticeDays")} className="input">
               <option value="">Choose…</option>
-              {NOTICE_PERIODS.map((n) => <option key={n.days} value={n.days}>{n.label}</option>)}
+              {NOTICE_PERIODS.map((n) => <option key={n.id} value={n.days ?? ""}>{n.label}</option>)}
             </select>
           </Field>
           <Field id="currentCtcLpa" label="Current CTC (LPA, optional)" error={errors.currentCtcLpa} hint="Lakh per year, e.g. 2.4">

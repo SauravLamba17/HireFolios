@@ -8,9 +8,11 @@ import { applications, candidateFiles, candidates, consents, jobs, rejectReasons
 import { StatusBadge, Tag } from "@/components/status-badge";
 import { formatDateIST, formatDateTimeIST, formatDayIST, todayIST } from "@/lib/ist";
 import { formatLpa, rupeesToLpa } from "@/lib/money";
+import { noticeLabelFrom } from "@/lib/lists";
+import { getOptionLists } from "@/lib/lists-db";
 import { NOTICE_LANGUAGES } from "@/lib/notice";
 import { canViewCandidate } from "@/lib/access";
-import { DECISION_LABELS, experienceLabel, noticeLabel, OFFER_STATUS_LABELS } from "@/lib/options";
+import { DECISION_LABELS, experienceLabel, OFFER_STATUS_LABELS } from "@/lib/options";
 import { can, requireStaff } from "@/lib/session";
 import { CorrectDetails, OfferForm, OverrideForm, ResumeButton } from "./profile-actions";
 import { audit } from "@/lib/staff";
@@ -51,6 +53,7 @@ function Facts({ items }: { items: [string, React.ReactNode][] }) {
 
 export default async function CandidatePage({ params }: { params: Promise<{ id: string }> }) {
   const staff = await requireStaff();
+  const lists = await getOptionLists(staff.tenantId);
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const tenantId = staff.tenantId;
@@ -176,7 +179,7 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
             ["Experience", experienceLabel(c.experienceMonths)],
             ["Current CTC", formatLpa(c.currentCtc)],
             ["Expected CTC", formatLpa(c.expectedCtc)],
-            ["Notice period", noticeLabel(c.noticeDays)],
+            ["Notice period", noticeLabelFrom(lists, c.noticeDays)],
             ["Languages", c.languages.join(", ")],
           ]}
         />

@@ -9,7 +9,8 @@ import { StatusCard } from "@/components/status-card";
 import { PAGE_SIZE, parseFilters, searchCandidates, type Filters } from "@/lib/candidate-search";
 import { formatDayIST } from "@/lib/ist";
 import { formatLpa } from "@/lib/money";
-import { CERTIFICATIONS, EHR_SOFTWARE, experienceLabel, OUTCOME_LABELS } from "@/lib/options";
+import { getOptionLists } from "@/lib/lists-db";
+import { experienceLabel, OUTCOME_LABELS } from "@/lib/options";
 import { can, ROLE_LABELS, requireStaff } from "@/lib/session";
 
 export const metadata: Metadata = { title: "Candidates" };
@@ -43,10 +44,16 @@ export default async function DashboardPage({ searchParams }: Props) {
   }
 
   const f = parseFilters(await searchParams);
-  const [{ rows, total }, jobList] = await Promise.all([
+  const [{ rows, total }, jobList, lists] = await Promise.all([
     searchCandidates(f, staff.tenantId),
     db.select({ id: jobs.id, title: jobs.title }).from(jobs).where(eq(jobs.tenantId, staff.tenantId)).orderBy(asc(jobs.title)),
+    getOptionLists(staff.tenantId),
   ]);
+  // Retired list items stay in the filters (older candidates have them), after the current ones.
+  const filterOptions = (items: typeof lists.certification) =>
+    [...items.filter((i) => i.active), ...items.filter((i) => !i.active)].map((i) => (
+      <option key={i.id} value={i.label}>{i.active ? i.label : `${i.label} (no longer offered)`}</option>
+    ));
   const filtered = hrefWith(f, { page: 1 }) !== "/dashboard";
   const first = (f.page - 1) * PAGE_SIZE + 1;
 
@@ -116,14 +123,14 @@ export default async function DashboardPage({ searchParams }: Props) {
           <label htmlFor="cert" className="label">Certification</label>
           <select id="cert" name="cert" defaultValue={f.cert ?? ""} className="input">
             <option value="">Any</option>
-            {CERTIFICATIONS.map((c) => <option key={c}>{c}</option>)}
+            {filterOptions(lists.certification)}
           </select>
         </div>
         <div>
           <label htmlFor="ehr" className="label">EHR / PM software</label>
           <select id="ehr" name="ehr" defaultValue={f.ehr ?? ""} className="input">
             <option value="">Any</option>
-            {EHR_SOFTWARE.map((c) => <option key={c}>{c}</option>)}
+            {filterOptions(lists.ehr_software)}
           </select>
         </div>
         <fieldset className="flex flex-wrap items-center gap-x-5 gap-y-2 md:col-span-2">

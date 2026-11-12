@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Chips } from "@/components/chips";
-import { CERTIFICATIONS } from "@/lib/options";
 import { send } from "@/lib/send";
 
 type Status = "open" | "paused" | "closed";
@@ -27,7 +26,9 @@ const STATUS: { value: Status; label: string; short: string; badge: string }[] =
 
 const num = (v: FormDataEntryValue | null) => (String(v ?? "").trim() === "" ? null : Number(v));
 
-function JobForm({ job, onSave, busy, submitLabel }: { job?: JobRow; onSave: (body: unknown) => Promise<boolean>; busy: boolean; submitLabel: string }) {
+function JobForm({ job, onSave, busy, submitLabel, certifications }: { job?: JobRow; onSave: (body: unknown) => Promise<boolean>; busy: boolean; submitLabel: string; certifications: string[] }) {
+  // Active certifications (Settings → Lists) plus any the job already requires, even if retired since.
+  const certOptions = [...new Set([...certifications, ...(job?.requiredCertifications ?? [])])];
   const [certs, setCerts] = useState<string[]>(job?.requiredCertifications ?? []);
   const p = job?.id ?? "new";
 
@@ -75,7 +76,7 @@ function JobForm({ job, onSave, busy, submitLabel }: { job?: JobRow; onSave: (bo
       </div>
       <div className="md:col-span-6">
         <span className="label">Required certifications</span>
-        <Chips label={`Required certifications for ${job?.title ?? "the new job"}`} options={CERTIFICATIONS} value={certs} onChange={setCerts} disabled={busy} />
+        <Chips label={`Required certifications for ${job?.title ?? "the new job"}`} options={certOptions} value={certs} onChange={setCerts} disabled={busy} />
       </div>
       <div className="md:col-span-6">
         <button type="submit" disabled={busy} className="btn btn-primary">{busy ? "Saving…" : submitLabel}</button>
@@ -84,7 +85,7 @@ function JobForm({ job, onSave, busy, submitLabel }: { job?: JobRow; onSave: (bo
   );
 }
 
-export function SettingsManager({ jobs, locations }: { jobs: JobRow[]; locations: Location[] }) {
+export function SettingsManager({ jobs, locations, certifications }: { jobs: JobRow[]; locations: Location[]; certifications: string[] }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,7 +142,7 @@ export function SettingsManager({ jobs, locations }: { jobs: JobRow[]; locations
 
       <section className="card space-y-4" aria-labelledby="add-job-h">
         <h2 id="add-job-h" className="text-lg font-semibold">Add a job</h2>
-        <JobForm busy={busy} submitLabel="Add job" onSave={(body) => run(() => send("/api/settings/jobs", "POST", body), "Job added.")} />
+        <JobForm certifications={certifications} busy={busy} submitLabel="Add job" onSave={(body) => run(() => send("/api/settings/jobs", "POST", body), "Job added.")} />
       </section>
 
       <section className="space-y-4" aria-labelledby="jobs-h">
@@ -164,6 +165,7 @@ export function SettingsManager({ jobs, locations }: { jobs: JobRow[]; locations
                 {j.sample && <span className="rounded-full bg-amber-100 px-2.5 py-1 text-sm font-medium text-amber-900">Sample — check and save</span>}
               </div>
               <JobForm
+                certifications={certifications}
                 key={JSON.stringify(j)}
                 job={j}
                 busy={busy}

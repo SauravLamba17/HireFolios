@@ -1,17 +1,17 @@
 import { z } from "zod";
 import { isUuid } from "@/db";
 import { act, badRequest } from "@/lib/api";
-import { firstIssue, IntakeDetails, Mobile } from "@/lib/intake";
+import { BaseDetails, firstIssue, Mobile } from "@/lib/intake";
 import { correctCandidate } from "@/lib/privacy";
 import { requireStaffApi } from "@/lib/session";
 
 // Same rules as intake for these fields (18+, real date, valid email, Indian mobile).
 const Correction = z.object({
-  fullName: IntakeDetails.shape.fullName,
+  fullName: BaseDetails.shape.fullName,
   mobile: Mobile,
-  email: IntakeDetails.shape.email,
-  city: IntakeDetails.shape.city,
-  dateOfBirth: IntakeDetails.shape.dateOfBirth,
+  email: BaseDetails.shape.email,
+  city: BaseDetails.shape.city,
+  dateOfBirth: BaseDetails.shape.dateOfBirth,
 });
 
 // Correction requests (admin, HR): fix a candidate's core details. Audited with field names only.

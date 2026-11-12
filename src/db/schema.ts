@@ -82,7 +82,76 @@ export const tenants = pgTable("tenants", {
   // Set by HR in Settings; used for wait estimates only until today has real interview times.
   avgInterviewMinutes: integer("avg_interview_minutes"),
   createdAt: createdAt(),
+  // Company profile (Settings → Company). `name` above is the company's display name; the product name is brand.ts.
+  shortName: text("short_name"),
+  officeAddress: text("office_address"),
+  // Stored for the SaaS phase; the app runs on IST only for now (CLAUDE.md hard rule 7, src/lib/ist.ts).
+  timeZone: text("time_zone").notNull().default("Asia/Kolkata"),
+  logoKey: text("logo_key"), // under UPLOAD_DIR, served by GET /api/company/logo
+  logoType: text("logo_type"),
+  logoUpdatedAt: ts("logo_updated_at"),
+  // Seeded values not yet saved by an admin in Settings → Company.
+  profileSample: boolean("profile_sample").notNull().default(true),
 });
+
+// Pick-lists per tenant (Settings → Lists). Values are stored on candidates as their label text; an item is never
+// deleted, only deactivated, so older records keep showing what was chosen then. `days` is for notice periods.
+export const optionListEnum = pgEnum("option_list", [
+  "certification",
+  "coding_specialty",
+  "ehr_software",
+  "education",
+  "notice_period",
+  "source",
+  "language",
+]);
+export const optionItems = pgTable(
+  "option_items",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    list: optionListEnum("list").notNull(),
+    label: text("label").notNull(),
+    days: integer("days"),
+    active: boolean("active").notNull().default(true),
+    position: integer("position").notNull(),
+    sample: boolean("sample").notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("option_items_tenant_list_label_uq").on(t.tenantId, t.list, t.label),
+    index("option_items_tenant_list_idx").on(t.tenantId, t.list, t.position),
+  ],
+);
+
+// Privacy notice versions per tenant (Settings → Privacy notice). One active version (shown at intake), at most one
+// draft; published versions are never edited again. Each consent keeps the version it was given.
+export const noticeStatusEnum = pgEnum("notice_status", ["draft", "active", "retired"]);
+export const privacyNotices = pgTable(
+  "privacy_notices",
+  {
+    id: id(),
+    tenantId: tenantId(),
+    version: text("version").notNull(),
+    status: noticeStatusEnum("status").notNull(),
+    effectiveDate: date("effective_date"),
+    // { en: NoticeTexts, hi: NoticeTexts } with {company} {photoDays} {dataDays} {contact} placeholders (src/lib/notice.ts)
+    texts: jsonb("texts").notNull(),
+    contactName: text("contact_name"),
+    contactEmail: text("contact_email"),
+    contactPhone: text("contact_phone"),
+    sample: boolean("sample").notNull().default(false),
+    createdAt: createdAt(),
+    createdBy: text("created_by").references(() => users.id),
+    publishedAt: ts("published_at"),
+    publishedBy: text("published_by").references(() => users.id),
+  },
+  (t) => [
+    unique("privacy_notices_tenant_version_uq").on(t.tenantId, t.version),
+    uniqueIndex("privacy_notices_one_active_uq").on(t.tenantId).where(sql`status = 'active'`),
+    uniqueIndex("privacy_notices_one_draft_uq").on(t.tenantId).where(sql`status = 'draft'`),
+  ],
+);
 
 // ---- Auth (Better Auth). Keys must match Better Auth field names. ----
 
@@ -477,6 +546,8 @@ export const consents = pgTable(
       .references(() => candidates.id, { onDelete: "cascade" }),
     applicationId: uuid("application_id").references(() => applications.id),
     noticeVersion: text("notice_version").notNull(),
+    // The exact notice text shown (null for consents given before notices lived in the database).
+    noticeId: uuid("notice_id").references(() => privacyNotices.id),
     language: text("language").notNull().default("en"), // language the notice was shown in
     // Purposes. Assessing this application is the required one; these two are optional extras.
     talentPool: boolean("talent_pool").notNull().default(false),

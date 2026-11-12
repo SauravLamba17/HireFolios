@@ -5,7 +5,6 @@ import { z } from "zod";
 import { db } from "@/db";
 import { outcomeEnum } from "@/db/schema";
 import { normalizeMobile } from "@/lib/intake";
-import { CERTIFICATIONS, EHR_SOFTWARE } from "@/lib/options";
 
 export const PAGE_SIZE = 25;
 // word_similarity(query, full_name): 1 = query is a whole word of the name. 0.4 lets one or two typos through.
@@ -23,8 +22,9 @@ export const CandidateFilters = z.object({
   status: z.enum(outcomeEnum.enumValues).optional().catch(undefined),
   from: day.optional().catch(undefined),
   to: day.optional().catch(undefined),
-  cert: z.enum(CERTIFICATIONS).optional().catch(undefined),
-  ehr: z.enum(EHR_SOFTWARE).optional().catch(undefined),
+  // labels from the tenant's lists (Settings → Lists); an unknown label just finds nobody
+  cert: z.string().trim().min(1).max(100).optional().catch(undefined),
+  ehr: z.string().trim().min(1).max(100).optional().catch(undefined),
   night: yes,
   voice: yes,
   pool: yes,

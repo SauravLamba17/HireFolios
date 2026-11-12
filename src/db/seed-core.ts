@@ -5,9 +5,12 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { jobs, locations, rejectReasons, stages, tenants, users } from "@/db/schema";
 import { REJECT_REASONS, SAMPLE_CRITERIA } from "@/lib/options";
+import { ensureListDefaults } from "@/lib/lists-db";
+import { ensureNotice } from "@/lib/notice-db";
 import { audit, createStaff } from "@/lib/staff";
 
-const TENANT = { name: "Simplen Billing e-Services", slug: "simplen", tokenPrefix: "SB" };
+// Starting company profile; an admin confirms it in Settings → Company (profile_sample stays true until then).
+const TENANT = { name: "Simplen Billing e-Services", slug: "simplen", tokenPrefix: "A" };
 // Sample pipeline for Simplen HR to confirm in Settings. Interview rounds get the sample criteria.
 const STAGES = [
   { name: "Registered", isInterview: false },
@@ -39,6 +42,9 @@ export async function seed() {
   await db.insert(tenants).values(TENANT).onConflictDoNothing({ target: tenants.slug });
   const tenant = await db.query.tenants.findFirst({ where: eq(tenants.slug, TENANT.slug) });
   if (!tenant) throw new Error("tenant upsert failed");
+  // Pick-lists and the privacy notice: starting versions marked "sample / draft", for Simplen to confirm in Settings.
+  await ensureListDefaults(tenant.id);
+  await ensureNotice(tenant.id);
 
   // Stages and reject reasons are editable in Settings, so they are seeded only into an empty tenant
   // (a renamed sample must not come back on the next seed run).

@@ -1,7 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { db, isUniqueViolation, isUuid } from "@/db";
 import { jobs } from "@/db/schema";
-import { JobInput } from "@/lib/jobs";
+import { makeJobInput } from "@/lib/jobs";
+import { getOptionLists } from "@/lib/lists-db";
 import { requireStaffApi } from "@/lib/session";
 import { audit } from "@/lib/staff";
 
@@ -12,7 +13,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const { staff, error } = await requireStaffApi(req, "settings");
   if (error) return error;
   const { id } = await params;
-  const parsed = JobInput.safeParse(await req.json().catch(() => null));
+  const certs = (await getOptionLists(staff.tenantId)).certification.map((c) => c.label);
+  const parsed = makeJobInput(certs).safeParse(await req.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: parsed.error.issues[0].message }, { status: 400 });
   if (!isUuid(id)) return Response.json({ error: "Job not found" }, { status: 404 });
   const j = parsed.data;
