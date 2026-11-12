@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { APP_TIME_ZONE } from "@/lib/ist";
 
 export function Clock() {
   const [now, setNow] = useState<Date | null>(null);
@@ -11,7 +12,7 @@ export function Clock() {
   }, []);
   return (
     <span suppressHydrationWarning>
-      {now?.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" }) ?? ""}
+      {now?.toLocaleTimeString("en-IN", { timeZone: APP_TIME_ZONE, hour: "numeric", minute: "2-digit" }) ?? ""}
     </span>
   );
 }

@@ -45,7 +45,7 @@ export function RetentionSettings({ cooldownDays, photoRetentionDays, dataRetent
         <p className="mt-1 text-sm text-slate-600">
           When a candidate is not hired (rejected, no-show, walked away or offer declined), their photo and then all their data are deleted automatically
           after these periods, counted from the decision. Candidates in the talent pool, candidates who joined, and anyone with a newer visit are never
-          deleted. Changes apply to future decisions unless you tick &ldquo;re-calculate&rdquo;. Confirm these periods with Simplen HR and legal.
+          deleted. Changes apply to future decisions unless you tick &ldquo;re-calculate&rdquo;. Confirm these periods with your HR team and legal adviser.
         </p>
       </div>
       <form onSubmit={onSubmit} className="grid gap-4 md:grid-cols-3">

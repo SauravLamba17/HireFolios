@@ -3,7 +3,7 @@ import "server-only";
 import { and, desc, eq, gte, isNull, lt, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, users } from "@/db/schema";
-import { todayIST } from "@/lib/ist";
+import { APP_UTC_OFFSET, todayIST } from "@/lib/ist";
 import { parseRange } from "@/lib/reports";
 
 export const AUDIT_PAGE = 100;
@@ -20,8 +20,8 @@ export function parseAuditFilters(q: Record<string, string | undefined>): AuditF
 }
 
 export function auditWhere(tenantId: string, f: AuditFilters): SQL {
-  const start = new Date(`${f.from}T00:00:00+05:30`);
-  const end = new Date(new Date(`${f.to}T00:00:00+05:30`).getTime() + 24 * 60 * 60 * 1000);
+  const start = new Date(`${f.from}T00:00:00${APP_UTC_OFFSET}`);
+  const end = new Date(new Date(`${f.to}T00:00:00${APP_UTC_OFFSET}`).getTime() + 24 * 60 * 60 * 1000);
   const parts: (SQL | undefined)[] = [eq(auditLog.tenantId, tenantId), gte(auditLog.createdAt, start), lt(auditLog.createdAt, end)];
   if (f.action) parts.push(eq(auditLog.action, f.action));
   if (f.actor === "system") parts.push(isNull(auditLog.actorUserId));

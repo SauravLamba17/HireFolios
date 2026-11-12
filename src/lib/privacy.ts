@@ -9,6 +9,7 @@ import { searchTextFor } from "@/lib/candidate-search";
 import { extensionOf, readFileUnder, uploadRoot } from "@/lib/files";
 import { FlowError, NotFoundError } from "@/lib/flow";
 import { eraseCandidateRows } from "@/lib/purge";
+import { APP_UTC_OFFSET } from "@/lib/ist";
 import { dsrDueAt } from "@/lib/retention";
 import type { Staff } from "@/lib/session";
 import { audit } from "@/lib/staff";
@@ -24,7 +25,7 @@ export async function createRequest(
     if (!c) throw new FlowError("No candidate with that mobile number. Leave it empty to log the request without one.");
     candidateId = c.id;
   }
-  const receivedAt = new Date(`${input.receivedOn}T12:00:00+05:30`);
+  const receivedAt = new Date(`${input.receivedOn}T12:00:00${APP_UTC_OFFSET}`);
   const [row] = await tx
     .insert(dsrRequests)
     .values({
