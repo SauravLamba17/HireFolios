@@ -186,10 +186,13 @@ describe("Phase 3 permissions", () => {
 });
 
 describe("TV session length", () => {
-  it("lobby TV 30 days, everyone else one 12-hour shift", async () => {
-    const { sessionSeconds, SESSION_SECONDS } = await import("./session-length");
-    expect(sessionSeconds("display")).toBe(30 * 24 * 3600);
-    for (const r of ["admin", "hr", "interviewer", "manager"]) expect(sessionSeconds(r)).toBe(12 * 3600);
-    expect(SESSION_SECONDS.display).toBeGreaterThan(SESSION_SECONDS.staff);
+  it("lobby TV 30 days, everyone else one 12-hour shift (defaults); STAFF_SESSION_HOURS / DISPLAY_SESSION_DAYS change them", async () => {
+    const { parseConfig } = await import("./config");
+    const base = { DATABASE_URL: "postgres://u:p@localhost:5432/db", UPLOAD_DIR: process.cwd(), BETTER_AUTH_URL: "http://localhost:3000", BETTER_AUTH_SECRET: "x".repeat(32) };
+    const d = parseConfig(base);
+    expect(d.DISPLAY_SESSION_DAYS * 24 * 3600).toBe(30 * 24 * 3600);
+    expect(d.STAFF_SESSION_HOURS * 3600).toBe(12 * 3600);
+    const c = parseConfig({ ...base, STAFF_SESSION_HOURS: "9", DISPLAY_SESSION_DAYS: "7" });
+    expect([c.STAFF_SESSION_HOURS, c.DISPLAY_SESSION_DAYS]).toEqual([9, 7]);
   });
 });

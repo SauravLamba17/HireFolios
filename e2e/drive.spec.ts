@@ -10,7 +10,6 @@ import { shoot, signIn, VIEWPORTS } from "./helpers";
 // so updates on one screen must reach the others without a reload (Server-Sent Events).
 const run = Date.now().toString(36);
 const sql = postgres(process.env.DATABASE_URL!);
-const NOTICE_VERSION = /export const NOTICE_VERSION = "([^"]+)"/.exec(fs.readFileSync("src/lib/notice.ts", "utf8"))![1];
 const SHOTS = process.env.SHOTS_DIR;
 type Who = { id: string; email: string; password: string };
 const who: Record<"hr" | "i1" | "i2" | "mgr" | "tv", Who> = {} as never;
@@ -68,7 +67,7 @@ test.afterAll(async () => {
   await sql`delete from applications where tenant_id in ${sql(t)}`;
   await sql`delete from panels where tenant_id in ${sql(t)}`;
   await sql`delete from drives where tenant_id in ${sql(t)}`;
-  for (const q of ["candidates", "daily_counters", "audit_log", "reject_reasons", "users", "jobs", "stages", "locations"]) await sql`delete from ${sql(q)} where tenant_id in ${sql(t)}`;
+  for (const q of ["candidates", "daily_counters", "audit_log", "reject_reasons", "option_items", "privacy_notices", "users", "jobs", "stages", "locations"]) await sql`delete from ${sql(q)} where tenant_id in ${sql(t)}`;
   await sql`delete from tenants where id = ${tenantId}`;
   const up = process.env.UPLOAD_DIR;
   if (up && path.isAbsolute(up)) fs.rmSync(path.join(up, tenantId), { recursive: true, force: true });
@@ -90,6 +89,8 @@ test("HR registers 4 walk-ins; they wait for the HR screen", async () => {
   const p = board();
   await p.goto("/login");
   const jpeg = await p.screenshot({ type: "jpeg" });
+  // the version in use (Settings → Privacy notice); the server refuses any other
+  const [{ version: NOTICE_VERSION }] = await sql`select n.version from privacy_notices n join users u on u.tenant_id = n.tenant_id where u.email = ${process.env.SEED_ADMIN_EMAIL!} and n.status = 'active'`;
   for (const [i, name] of names.entries()) {
     const res = await p.request.post("/api/intake", {
       multipart: {

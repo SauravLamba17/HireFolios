@@ -86,7 +86,7 @@ test.afterAll(async () => {
   await sql`delete from applications where tenant_id in ${sql(t)}`;
   await sql`delete from panels where tenant_id in ${sql(t)}`;
   await sql`delete from drives where tenant_id in ${sql(t)}`;
-  for (const q of ["candidates", "daily_counters", "audit_log", "reject_reasons", "users", "jobs", "stages", "locations"]) await sql`delete from ${sql(q)} where tenant_id in ${sql(t)}`;
+  for (const q of ["candidates", "daily_counters", "audit_log", "reject_reasons", "option_items", "privacy_notices", "users", "jobs", "stages", "locations"]) await sql`delete from ${sql(q)} where tenant_id in ${sql(t)}`;
   await sql`delete from tenants where id = ${tenantId}`;
   fs.rmSync(path.join(UPLOAD, tenantId), { recursive: true, force: true });
   await sql.end();

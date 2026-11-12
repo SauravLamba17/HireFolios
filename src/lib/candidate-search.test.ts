@@ -10,8 +10,12 @@ const build = (params: Record<string, string>) => dialect.sqlToQuery(candidateWh
 
 describe("search filter parsing", () => {
   it("drops bad or stale URL values instead of failing", () => {
-    const f = parseFilters({ q: "  epic ", job: "nope", status: "bogus", from: "yesterday", cert: "XYZ", night: "1", page: "abc" });
-    expect(f).toEqual({ q: "epic", page: 1 });
+    const f = parseFilters({ q: "  epic ", job: "nope", status: "bogus", from: "yesterday", night: "1", page: "abc" });
+    expect(f).toMatchObject({ q: "epic", page: 1, job: undefined, status: undefined, from: undefined, night: undefined });
+  });
+  it("keeps any list label (the lists live in the database); an unknown one just finds nobody", () => {
+    expect(parseFilters({ cert: "XYZ" }).cert).toBe("XYZ");
+    expect(parseFilters({ cert: "x".repeat(101) }).cert).toBeUndefined();
   });
   it("keeps good values; repeated params use the first", () => {
     const f = parseFilters({ q: ["cpc", "x"], status: "rejected", cert: "CPC", ehr: "Epic", night: "yes", pool: "yes", from: "2026-11-01", page: "3" });

@@ -7,7 +7,7 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { db, pgClient } from "@/db";
 import * as s from "@/db/schema";
 import { uploadRoot } from "@/lib/files";
-import { NOTICE_VERSION } from "@/lib/notice";
+import { DEFAULT_NOTICE_VERSION as NOTICE_VERSION } from "@/lib/notice"; // a new tenant starts with this version
 import { planPurge, runPurge } from "@/lib/purge";
 import { createStaff } from "@/lib/staff";
 
@@ -94,7 +94,7 @@ const filesOnDisk = (root: string, tenantId: string) => {
 };
 
 async function makeTenant(slug: string) {
-  const [t] = await db.insert(s.tenants).values({ name: `Smoke ${slug}`, slug: `smoke-${slug}-${RUN}`, tokenPrefix: "SM" }).returning();
+  const [t] = await db.insert(s.tenants).values({ name: `Smoke ${slug}`, slug: `smoke-${slug}-${RUN}`, tokenPrefix: "A" }).returning();
   await db.insert(s.stages).values([
     { tenantId: t.id, name: "Registered", position: 1 },
     { tenantId: t.id, name: "HR screen", position: 2, isInterview: true, criteria: [{ label: "Communication", required: true }] },
@@ -125,6 +125,8 @@ async function cleanup(tenantIds: string[], root: string | null) {
   await db.delete(s.candidates).where(inArray(s.candidates.tenantId, tenantIds));
   await db.delete(s.dailyCounters).where(inArray(s.dailyCounters.tenantId, tenantIds));
   await db.delete(s.auditLog).where(inArray(s.auditLog.tenantId, tenantIds));
+  await db.delete(s.optionItems).where(inArray(s.optionItems.tenantId, tenantIds));
+  await db.delete(s.privacyNotices).where(inArray(s.privacyNotices.tenantId, tenantIds));
   await db.delete(s.users).where(inArray(s.users.tenantId, tenantIds)); // sessions + accounts cascade
   await db.delete(s.jobs).where(inArray(s.jobs.tenantId, tenantIds));
   await db.delete(s.stages).where(inArray(s.stages.tenantId, tenantIds));

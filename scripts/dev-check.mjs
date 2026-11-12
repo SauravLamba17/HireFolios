@@ -10,7 +10,7 @@ const port = process.env.DEV_CHECK_PORT || "3199";
 const base = `http://127.0.0.1:${port}`;
 const PAGES = [
   "/login", "/intake", "/dashboard", "/dashboard/drive", "/dashboard/reports", "/dashboard/privacy",
-  "/dashboard/audit", "/dashboard/settings", "/dashboard/users", "/interview", "/tv", "/account/password", "/api/health",
+  "/dashboard/audit", "/dashboard/settings", "/dashboard/settings/lists", "/dashboard/settings/notice", "/dashboard/settings/company", "/dashboard/users", "/interview", "/tv", "/account/password", "/api/health",
 ];
 const BAD = /Module build failed|UnhandledSchemeError|Failed to compile|⨯|Error: /;
 

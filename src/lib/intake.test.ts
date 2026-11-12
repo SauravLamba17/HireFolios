@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { ageOn, IntakeDetails, IntakeRequest, latestAdultDob, normalizeMobile } from "./intake";
+import { ageOn, latestAdultDob, makeIntakeDetails, makeIntakeRequest, normalizeMobile } from "./intake";
+import { defaultOptionLists } from "./lists";
 import { todayIST } from "./ist";
 import { formatLpa, lpaToRupees, rupeesToLpa } from "./money";
-import { NOTICE_VERSION, noticeText } from "./notice";
+import { contactText, DEFAULT_NOTICE_TEXTS, noticeProblems, renderNotice } from "./notice";
+
+const lists = defaultOptionLists();
+const IntakeDetails = makeIntakeDetails(lists);
+const IntakeRequest = makeIntakeRequest(lists);
+const NOTICE_VERSION = "v2-2026-11-12";
 
 describe("normalizeMobile", () => {
   it.each([
@@ -125,7 +131,8 @@ describe("intake schema (shared by the browser and the server)", () => {
   it("requires consent and the current notice version", () => {
     const base = { clientRequestId: crypto.randomUUID(), mobile: "9876543210", details: details() };
     expect(firstError(IntakeRequest.safeParse({ ...base, consent: consent({ agreed: false }) }))).toMatch(/consent/i);
-    expect(firstError(IntakeRequest.safeParse({ ...base, consent: consent({ noticeVersion: "v0" }) }))).toMatch(/notice changed/);
+    // the version itself is compared with the active notice by the server (POST /api/intake)
+    expect(IntakeRequest.safeParse({ ...base, consent: consent({ noticeVersion: "" }) }).success).toBe(false);
     expect(IntakeRequest.safeParse({ ...base, consent: consent() }).success).toBe(true);
   });
 
@@ -135,17 +142,58 @@ describe("intake schema (shared by the browser and the server)", () => {
   });
 });
 
+describe("lists from the database", () => {
+  it("a retired item is refused on a new form; a renamed one is accepted under its new name", () => {
+    const l = defaultOptionLists();
+    l.certification = l.certification.map((c) => (c.label === "COC" ? { ...c, active: false } : c.label === "CPC" ? { ...c, label: "CPC (AAPC)" } : c));
+    const schema = makeIntakeDetails(l);
+    expect(firstError(schema.safeParse(details({ certifications: ["COC"] })))).toMatch(/certification/);
+    expect(firstError(schema.safeParse(details({ certifications: ["CPC"] })))).toMatch(/certification/);
+    expect(schema.safeParse(details({ certifications: ["CPC (AAPC)"] })).success).toBe(true);
+  });
+  it("a retired notice period and source are refused", () => {
+    const l = defaultOptionLists();
+    l.notice_period = l.notice_period.map((n) => (n.days === 15 ? { ...n, active: false } : n));
+    l.source = l.source.map((s) => (s.label === "Naukri" ? { ...s, active: false } : s));
+    const schema = makeIntakeDetails(l);
+    expect(firstError(schema.safeParse(details({ noticeDays: 15 })))).toMatch(/notice period/);
+    expect(firstError(schema.safeParse(details({ source: "Naukri" })))).toMatch(/heard about/);
+  });
+});
+
 describe("privacy notice", () => {
+  const vars = { company: "Acme", photoDays: 180, dataDays: 365, contact: "Ritu, dpo@acme.test" };
   it("has the same parts in English and Hindi, with the tenant's retention", () => {
-    const en = noticeText("en", { company: "Acme", photoDays: 180, dataDays: 365 });
-    const hi = noticeText("hi", { company: "Acme", photoDays: 180, dataDays: 365 });
+    const en = renderNotice(DEFAULT_NOTICE_TEXTS.en, vars);
+    const hi = renderNotice(DEFAULT_NOTICE_TEXTS.hi, vars);
     expect(Object.keys(hi)).toEqual(Object.keys(en));
     expect(hi.paragraphs.length).toBe(en.paragraphs.length);
     for (const t of [en, hi]) {
       expect(t.paragraphs.join(" ")).toContain("Acme");
       expect(t.paragraphs.join(" ")).toContain("180");
       expect(t.paragraphs.join(" ")).toContain("365");
+      expect(JSON.stringify(t)).not.toMatch(/\{\w+\}/); // every placeholder filled
     }
     expect(en.paragraphs.join(" ")).toMatch(/Aadhaar/);
+  });
+  it("the starting text is exactly what the version draft-2026-11-10 showed", () => {
+    expect(renderNotice(DEFAULT_NOTICE_TEXTS.en, vars).paragraphs[0]).toBe(
+      "Acme's HR team is recording these details for your job application: name, mobile number, email, date of birth, city, education, experience, current and expected salary, certifications and skills, a photo of you, and photos of your CV pages.",
+    );
+  });
+  it("fills {contact}; falls back to the HR desk", () => {
+    const t = { ...DEFAULT_NOTICE_TEXTS.en, paragraphs: ["Contact {contact}."] };
+    expect(renderNotice(t, vars).paragraphs[0]).toBe("Contact Ritu, dpo@acme.test.");
+    expect(contactText("en", { name: null, email: null, phone: null })).toBe("the HR desk");
+    expect(contactText("hi", { name: "Ritu", email: null, phone: "98765 43210" })).toBe("Ritu, 98765 43210");
+  });
+  it("blocks publishing empty parts and unknown placeholders", () => {
+    expect(noticeProblems(DEFAULT_NOTICE_TEXTS)).toEqual([]);
+    const bad = structuredClone(DEFAULT_NOTICE_TEXTS);
+    bad.hi.paragraphs = [" "];
+    bad.en.agree = "Agree to {compnay}";
+    const p = noticeProblems(bad);
+    expect(p.join(" ")).toMatch(/हिन्दी: the notice text is empty/);
+    expect(p.join(" ")).toMatch(/unknown placeholder \{compnay\}/);
   });
 });
