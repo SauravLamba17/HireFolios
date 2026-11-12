@@ -8,6 +8,8 @@
     # Invoke-Psql takes the database password read from the .env file (plain text there by design, ACL-protected)
     # and hands it to psql through PGPASSWORD, never on a command line; a SecureString would be converted straight back.
     'PSAvoidUsingPlainTextForPassword',
-    'PSAvoidUsingUsernameAndPasswordParams'
+    'PSAvoidUsingUsernameAndPasswordParams',
+    # check-machine.ps1 reports each item as Add-Result STATUS 'Item' 'found' 'fix': one line per check reads best.
+    'PSAvoidUsingPositionalParameters'
   )
 }
