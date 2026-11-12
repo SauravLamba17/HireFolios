@@ -6,6 +6,7 @@ import path from "node:path";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
 import { applications, candidateFiles, candidates, consents, queueEvents, scorecards, tenants } from "@/db/schema";
+import { config, inOfficeHours } from "@/lib/config";
 import { uploadRoot } from "@/lib/files";
 import type { Outcome } from "@/lib/flow";
 import { candidateErasable, photoErasable } from "@/lib/retention";
@@ -147,11 +148,11 @@ export async function runPurge(opts: { now?: Date; dryRun: boolean; tenantId?: s
 
 // ---------- scheduler (started from src/instrumentation.ts) ----------
 
-const EVERY_MS = 30 * 60 * 1000;
 const g = globalThis as unknown as { purgeTimer?: ReturnType<typeof setInterval>; purgeRunning?: boolean };
 
 async function tick() {
   if (g.purgeRunning) return; // never two runs at once
+  if (inOfficeHours(new Date(), config().OFFICE_HOURS)) return; // waits until the office is closed (OFFICE_HOURS)
   g.purgeRunning = true;
   try {
     const counts = await runPurge({ dryRun: false });
@@ -166,7 +167,8 @@ async function tick() {
 
 export function startPurgeScheduler() {
   if (g.purgeTimer) return;
-  console.log("deletion job scheduled (every 30 min)");
-  g.purgeTimer = setInterval(tick, EVERY_MS);
+  const { PURGE_INTERVAL_MINUTES: every, OFFICE_HOURS: hours } = config();
+  console.log(`deletion job scheduled (every ${every} min${hours ? `, outside office hours ${hours}` : ""})`);
+  g.purgeTimer = setInterval(tick, every * 60 * 1000);
   setTimeout(tick, 15_000); // shortly after start-up
 }
