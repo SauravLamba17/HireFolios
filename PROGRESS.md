@@ -1,6 +1,8 @@
 # Progress
 
-Phase 3.5 is complete (2026-11-12): lists, privacy notice and company profile in the database with Settings screens,
+Phase 3.6 is complete (2026-11-13): candidate 360 + rediscovery (hiring summary, quick-look, tags and suggestions, contact
+etiquette, call-backs, consent after the visit, pool, bulk hiring lists, pushes, joining-risk hints, reports).
+Phase 3.5 (2026-11-12): lists, privacy notice and company profile in the database with Settings screens,
 configuration checked at start-up, a permanent dev PostgreSQL 16, pinned versions and an office machine check.
 Phase 3 (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is listed at the end.
 
@@ -362,7 +364,7 @@ Phase 3 (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is 
 - Still open from earlier phases: office-PC-only checks (reboot, LAN, real webcam), `npm audit` items in build tools,
   staff emails unique across tenants, in-memory sign-in rate limit, `update-user` rename, in-process live-update bus.
 
-## Phase 3.6 — Candidate 360 + rediscovery (in progress, spec: docs/REDISCOVERY.md)
+## Phase 3.6 — Candidate 360 + rediscovery ✅ (2026-11-13, spec: docs/REDISCOVERY.md, HR guide: docs/HR-GUIDE-REDISCOVERY.md)
 
 - [x] **A** — spec (`docs/REDISCOVERY.md`); migration `0006_rediscovery` (adds only, backfills reason / visit categories;
       backfill checked on the dev database with a throwaway tenant); `tenant_settings` + Settings → Rediscovery (sample
@@ -393,6 +395,61 @@ Phase 3 (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is 
       Reports → Rediscovery (why not hired by category / position, cost gap, pool by tag, suggestions accepted vs dismissed,
       call-backs, push funnel, hints vs outcome), demo seed (cost rejections, near-miss, returning candidate, call-backs due,
       offer with hints, push), docs (`REDISCOVERY.md` final, `HR-GUIDE-REDISCOVERY.md`, CLAUDE.md, first-drive checklist)
+
+### Verification (Phase 3.6, permanent dev PostgreSQL 16.15, 2026-11-12/13)
+
+- `tsc`, `eslint` clean; vitest **212/212** (51 new: summary, categories, cost gap, settings limits, suggestions incl. 3.49 / 3.5,
+  dismiss → new decision, score change, cooling 29 / 30 / 31, templates EN / HI, call-back dates, keep period, ranking, risk
+  hints, intake other offer)
+- `npm run smoke` **166/166** on `next dev`, **164/164** on the production build, **165/165** on a **fresh empty database**
+  (throwaway PostgreSQL 16 cluster made with initdb in the session folder, port 5433, started with `RUN_MIGRATIONS=1
+  SEED_ON_START=1`: 7 migrations, seed with reason categories; cluster deleted afterwards). The count varies by 1–2 because
+  two checks only run when the run's data has a matching candidate
+- Migration backfill checked on the dev database: throwaway tenant with sample + custom + deleted reasons and rejected /
+  no-show / walked-away / selected / open visits added before `db:migrate`, every reason and visit got the expected category
+- Playwright **full suite 35 passed, 1 skipped** (plain-http LAN test) in Chrome on the production build; one later run lost
+  Chrome at launch on its first test (environment; re-run passed); `e2e/rediscovery.spec.ts` **9/9** in Chrome and Edge,
+  `browsers.spec` 2/2 in Chrome and Edge (no sideways scroll on the 7 new pages)
+- `npm run dev:check` 24 pages (8 new); `npm run db:check` 4/4; `npm run lint:ps` 11 scripts (PSScriptAnalyzer module not
+  installed on this PC, skipped by the script); `npm run package` → `release/hirefolios-0.1.0` + zip, 2,315 files, no source /
+  env files, 4 secrets checked
+- **10,000 sample candidates** (`scripts/perf-rediscovery.ts`, 20,001 visits, 2,500 tags, throwaway tenant deleted after):
+  quick-look 34–108 ms (typo name), 32–142 ms (2 letters), 5–17 ms (4 digits); pool 99–229 ms; bulk list 324 ms
+- Demo data: `npm run demo:seed` (with a throwaway password) → 20 candidates, 21 visits, tags, 2 call-backs due, an offer with 4
+  risk hints, a push; then `npm run demo:clear` (no demo tenant left)
+- Screenshots at 1440, 1366x768, 1024 reviewed (session folder, not the repo)
+
+### Issues found while building and testing (logged before fixing; re-tested)
+
+| # | Issue | Severity | Cause | Fix | Re-test |
+|---|---|---|---|---|---|
+| 1 | Quick-look by mobile digits: 500 "ORDER BY position 0" | major | constant `0` as sort key | typed constant | e2e + smoke pass |
+| 2 | Bulk list / Save push: 500 "text >= date" | blocker | last visit compared as text | cast to date | smoke + e2e pass |
+| 3 | Bulk list 1.27–1.5 s on 10k candidates (target < 1 s) | major | 7 correlated sub-queries per candidate | one set-based query per table; sources / exclusions before summaries | 324 ms |
+| 4 | Weak in-budget person outranked a strong one 7 % over budget | major | over-budget part dropped to ≤ 0.5 at once and to 0 at the limit | slightly over falls 1 → 0.5 at the limit, beyond is left out | unit test |
+| 5 | Saving one Settings section left the other keys without rows | minor | save did not seed defaults | seed first | smoke |
+| 6 | Quick-look list ran off the left edge at 1024 | minor | right-anchored dropdown when the header wraps | left-anchored below 1280 px | screenshot |
+| 7 | "Add a tag" named both the form and the select | minor (a11y) | duplicate accessible name | form renamed "New tag" | e2e |
+| 8 | Interviewer's view showed the cost figures (asked vs budget) | major (privacy) | summary line used them for every viewer | figures withheld without the `rediscovery` permission (profile + API) | smoke |
+| 9 | Smoke clean-up failed once exports existed | minor (tests) | `exports` rows not deleted | added | smoke |
+| 10 | Browser tests flaky against `next dev` (first compile > 5 s) | none (test setup) | on-demand compiling | e2e run on the production build | 9/9 |
+
+### Known issues / left open after Phase 3.6
+
+- **Simplen must confirm before relying on it:** Settings → Rediscovery (every value is "Sample"), Settings → Lists → Reject
+  categories (and which are skill reasons) and Rediscovery tags, the category of each reject reason, the six WhatsApp messages
+  (Hindi by a native speaker). Defaults and texts: docs/REDISCOVERY.md.
+- The header now wraps to two rows at 1366 for HR and three at 1024 for admins (quick-look box + more links); left for the
+  planned design pass.
+- At 10,000 candidates PostgreSQL scans `candidates` instead of using the trigram indexes (faster at that size); they are used
+  on larger tables. The suggestions page looks at the 300 most recent decisions (comment in the code).
+- Risk hints are saved with an offer from Phase 3.6 on; earlier offers have none, so "hints vs outcome" starts empty.
+- Loading Settings → Rediscovery / Lists or any profile seeds the sample settings and the two new lists for that tenant (same as
+  the Phase 3.5 lists); the dev tenant got them during the browser tests.
+- A candidate erased by retention or a rights request loses tags, contact log, call-backs, other offers and push rows with them
+  (by design); a later walk-in starts fresh, including Do not contact.
+- Still open from earlier phases: office-PC-only checks (reboot, LAN, real webcam), `npm audit` items in build tools, staff
+  emails unique across tenants, in-memory sign-in rate limit, `update-user` rename, in-process live-update bus.
 
 ## Phase 4 — next
 
