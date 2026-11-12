@@ -114,12 +114,12 @@ try {
 
   # ---------------------------------------------------------------- PostgreSQL
   Write-Step "PostgreSQL"
-  $pg = Find-PostgreSQL | Where-Object { $_.Major -ge 16 } | Select-Object -First 1
+  $pg = Find-PostgreSQL | Where-Object { $_.Major -eq $script:PgMajor } | Select-Object -First 1
   $pgSuper = $cfg["PG_SUPERUSER_PASSWORD"]
   $pgOurs = $cfg["PG_INSTALLED_BY_HIREFOLIOS"] -eq "1"
   if (-not $pg) {
     $old = Find-PostgreSQL | Select-Object -First 1
-    if ($old) { throw "PostgreSQL $($old.Version) is installed; Hirefolios needs 16 or newer. Upgrade it (or uninstall it if nothing else uses it), then run this again." }
+    if ($old) { throw "PostgreSQL $($old.Version) is installed; Hirefolios needs PostgreSQL $($script:PgMajor) (versions.json). Install $($script:PgMajor) next to it, or remove the other one if nothing else uses it, then run this again." }
     $pgSuper = New-Secret 24
     # Saved before PostgreSQL is installed with it: if anything fails later, a re-run still knows it.
     Save-Setting @{ PG_SUPERUSER_PASSWORD = $pgSuper }
@@ -131,15 +131,15 @@ try {
       $p = Start-Process -FilePath $PostgresInstaller -ArgumentList $pgArgs -Wait -PassThru
       if ($p.ExitCode -ne 0) { throw "The PostgreSQL installer failed (exit $($p.ExitCode))." }
     } elseif (Get-Command winget.exe -ErrorAction SilentlyContinue) {
-      Write-Note "Installing PostgreSQL 16 with winget (PostgreSQL License; takes a few minutes)..."
-      & winget.exe install --id PostgreSQL.PostgreSQL.16 --exact --source winget --silent --accept-package-agreements --accept-source-agreements --override $pgArgs
+      Write-Note "Installing PostgreSQL $($script:PgMajor) with winget (PostgreSQL License; takes a few minutes)..."
+      & winget.exe install --id $script:Versions.postgresql.wingetId --exact --source winget --silent --accept-package-agreements --accept-source-agreements --override $pgArgs
       if ($LASTEXITCODE -ne 0) {
-        throw "winget could not install PostgreSQL (exit $LASTEXITCODE). Without internet: on another PC download the PostgreSQL 16 Windows x86-64 installer from https://www.enterprisedb.com/downloads/postgres-postgresql-downloads, copy it here and run: install.ps1 -PostgresInstaller <path to the .exe>"
+        throw "winget could not install PostgreSQL (exit $LASTEXITCODE). Without internet: on another PC download the PostgreSQL $($script:PgMajor) Windows x86-64 installer from https://www.enterprisedb.com/downloads/postgres-postgresql-downloads, copy it here and run: install.ps1 -PostgresInstaller <path to the .exe>"
       }
     } else {
-      throw "winget is not available. Download the PostgreSQL 16 Windows x86-64 installer from https://www.enterprisedb.com/downloads/postgres-postgresql-downloads (on any PC), copy it here and run: install.ps1 -PostgresInstaller <path to the .exe>"
+      throw "winget is not available. Download the PostgreSQL $($script:PgMajor) Windows x86-64 installer from https://www.enterprisedb.com/downloads/postgres-postgresql-downloads (on any PC), copy it here and run: install.ps1 -PostgresInstaller <path to the .exe>"
     }
-    $pg = Find-PostgreSQL | Where-Object { $_.Major -ge 16 } | Select-Object -First 1
+    $pg = Find-PostgreSQL | Where-Object { $_.Major -eq $script:PgMajor } | Select-Object -First 1
     if (-not $pg) { throw "PostgreSQL was installed but cannot be found in the registry. Restart the PC and run this again." }
     $pgOurs = $true
     Save-Setting @{ PG_INSTALLED_BY_HIREFOLIOS = "1"; PG_BIN = $pg.Bin; PG_SERVICE = $pg.Service }
@@ -239,7 +239,7 @@ SELECT 'exists' FROM pg_database WHERE datname = 'hirefolios';
   }
   Write-Ok "app, scripts and docs copied"
 
-  # Tools: hashes pinned in common.ps1, checked again here.
+  # Tools: versions and hashes pinned in versions.json, checked again here.
   $winsw = Join-Path $release "tools\$($script:Tools.winsw.File)"
   if ((Get-FileSha256 $winsw) -ne $script:Tools.winsw.Sha256) { throw "$winsw does not match its pinned checksum." }
   $svcExe = Join-Path $InstallDir "service\hirefolios.exe"

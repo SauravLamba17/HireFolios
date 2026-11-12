@@ -18,7 +18,11 @@
     "postbuild": "node -e \"const fs=require('fs'),d=process.env.NEXT_DIST_DIR||'.next';fs.cpSync(d+'/static',d+'/standalone/'+d+'/static',{recursive:true});if(fs.existsSync('public'))fs.cpSync('public',d+'/standalone/public',{recursive:true})\"",
     "dev:check": "node scripts/dev-check.mjs",
     "smoke": "tsx --conditions=react-server --env-file-if-exists=.env scripts/smoke.ts",
-    "package": "node scripts/package.mjs"
+    "package": "node scripts/package.mjs",
+    "db:check": "tsx --env-file-if-exists=.env scripts/db-check.ts",
+    "demo:seed": "tsx --conditions=react-server --env-file-if-exists=.env scripts/demo-seed.ts",
+    "demo:clear": "tsx --conditions=react-server --env-file-if-exists=.env scripts/demo-seed.ts --clear",
+    "lint:ps": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/lint-ps.ps1"
   },
   "dependencies": {
     "better-auth": "^1.7.19",
@@ -48,6 +52,6 @@
     "vitest": "^5.1.0"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24 <25"
   }
 }

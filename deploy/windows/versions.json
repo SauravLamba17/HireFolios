@@ -1,0 +1,17 @@
+{
+  "_comment": "The one place for pinned versions. Read by install.ps1 / update.ps1 / check-machine.ps1 (common.ps1), scripts/package.mjs, the app's start-up check (src/lib/runtime-check.ts) and a unit test that keeps package.json engines in step.",
+  "node": { "major": 24 },
+  "postgresql": { "major": 16, "wingetId": "PostgreSQL.PostgreSQL.16", "download": "https://www.enterprisedb.com/downloads/postgres-postgresql-downloads" },
+  "caddy": {
+    "version": "2.11.9",
+    "file": "caddy_2.11.9_windows_amd64.zip",
+    "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.9/caddy_2.11.9_windows_amd64.zip",
+    "sha256": "ad93112d335ee687100c4c9f11bced16ca590377976b7fe7883882b9e797e472"
+  },
+  "winsw": {
+    "version": "2.12.0",
+    "file": "WinSW.NET461.exe",
+    "url": "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW.NET461.exe",
+    "sha256": "b5066b7bbdfba1293e5d15cda3caaea88fbeab35bd5b38c41c913d492aadfc4f"
+  }
+}

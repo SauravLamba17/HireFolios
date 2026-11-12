@@ -1,6 +1,6 @@
 // npm run package [-- --version 0.2.0]  →  release/hirefolios-<version>/ (+ .zip) for the Windows office PC.
 // Contents: app/ (Next.js standalone server, static files, migrations, bundled node.exe, VERSION.txt, release.env),
-// scripts/ (deploy/windows), tools/ (WinSW + Caddy, pinned checksums from deploy/windows/common.ps1), docs/.
+// scripts/ (deploy/windows), tools/ (WinSW + Caddy, versions and checksums pinned in deploy/windows/versions.json), docs/.
 // The seed runs inside the server at first start (SEED_ON_START=1, set by install.ps1).
 // Never included: source, tests, .env files. The build uses its own dist folder, so a running `next dev` is untouched.
 import { spawnSync } from "node:child_process";
@@ -29,11 +29,14 @@ const build = spawnSync(process.execPath, ["node_modules/next/dist/bin/next", "b
 fs.writeFileSync("tsconfig.json", tsconfig);
 if (build.status !== 0) process.exit(build.status ?? 1);
 
-// 2. Tools, pinned in common.ps1 (one place for versions and checksums), cached in .cache/tools.
+// 2. Tools, pinned in deploy/windows/versions.json (the one place for versions and checksums), cached in .cache/tools.
 step("tools");
-const common = fs.readFileSync("deploy/windows/common.ps1", "utf8");
-const tools = [...common.matchAll(/File = "([^"]+)"; Url = "([^"]+)"; Sha256 = "([0-9a-f]{64})"/g)].map((m) => ({ file: m[1], url: m[2], sha: m[3] }));
-if (tools.length !== 2) throw new Error("expected 2 pinned tools in deploy/windows/common.ps1");
+const versions = JSON.parse(fs.readFileSync("deploy/windows/versions.json", "utf8"));
+const tools = ["winsw", "caddy"].map((k) => ({ file: versions[k].file, url: versions[k].url, sha: versions[k].sha256 }));
+const nodeMajor = Number(process.versions.node.split(".")[0]);
+if (nodeMajor !== versions.node.major) {
+  throw new Error(`Build with Node.js ${versions.node.major} (versions.json): this is ${process.version}, and its node.exe is what ships.`);
+}
 fs.mkdirSync(".cache/tools", { recursive: true });
 for (const t of tools) {
   const cached = path.join(".cache/tools", t.file);
@@ -43,7 +46,7 @@ for (const t of tools) {
     if (!res.ok) throw new Error(`${t.url}: HTTP ${res.status}`);
     fs.writeFileSync(cached, Buffer.from(await res.arrayBuffer()));
   }
-  if (sha256(cached) !== t.sha) throw new Error(`${t.file}: checksum does not match the pin in common.ps1`);
+  if (sha256(cached) !== t.sha) throw new Error(`${t.file}: checksum does not match versions.json`);
   console.log(`ok  ${t.file} sha256 ${t.sha.slice(0, 16)}…`);
 }
 
@@ -100,7 +103,9 @@ try {
     fs.readFileSync(".env", "utf8").split(/\r?\n/).map((l) => l.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/)).filter(Boolean).map((m) => [m[1], m[2].trim()]),
   );
   const dbPass = env.DATABASE_URL ? decodeURIComponent(new URL(env.DATABASE_URL).password) : "";
-  secrets = [env.BETTER_AUTH_SECRET, env.SEED_ADMIN_PASSWORD, dbPass].filter((s) => s && s.length >= 8);
+  // every secret-looking value in .env (BETTER_AUTH_SECRET, *_PASSWORD, *_TOKEN, ...) and the database password
+  const named = Object.entries(env).filter(([k]) => /SECRET|PASSWORD|TOKEN|KEY/.test(k)).map(([, v]) => v);
+  secrets = [...named, dbPass].filter((s) => s && s.length >= 8);
 } catch {
   // no .env on this PC: nothing to look for
 }

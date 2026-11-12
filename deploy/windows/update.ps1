@@ -42,11 +42,18 @@ try {
     $inner = @(Get-ChildItem -LiteralPath $staging -Directory)
     $From = if ($inner.Count -eq 1 -and -not (Test-Path (Join-Path $staging "app"))) { $inner[0].FullName } else { $staging }
   }
-  foreach ($f in "app\server.js", "app\node\node.exe", "app\VERSION.txt", "app\release.env", "scripts\update.ps1") {
+  foreach ($f in "app\server.js", "app\node\node.exe", "app\VERSION.txt", "app\release.env", "scripts\update.ps1", "scripts\versions.json") {
     if (-not (Test-Path (Join-Path $From $f))) { throw "$From is not a complete Hirefolios release ($f is missing)." }
   }
   $sig = Get-AuthenticodeSignature -FilePath (Join-Path $From "app\node\node.exe")
   if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch "OpenJS Foundation") { throw "node.exe in the new release is not signed by the OpenJS Foundation." }
+  # The new release's own versions.json says which Node.js and PostgreSQL major it needs.
+  $newPins = Get-Content -Raw -LiteralPath (Join-Path $From "scripts\versions.json") | ConvertFrom-Json
+  $nodeMajor = [int]("$(& (Join-Path $From 'app\node\node.exe') --version)".TrimStart("v").Split(".")[0])
+  if ($nodeMajor -ne [int]$newPins.node.major) { throw "The new release ships Node.js $nodeMajor but its versions.json says $($newPins.node.major). Nothing was changed." }
+  $pgMajorHere = [int](("$(& (Join-Path $cfg['PG_BIN'] 'pg_dump.exe') --version)" -replace '^\D+', '').Split(".")[0])
+  if ($pgMajorHere -ne [int]$newPins.postgresql.major) { throw "The new release needs PostgreSQL $($newPins.postgresql.major); this PC has PostgreSQL $pgMajorHere. Nothing was changed." }
+  Write-Ok "Node.js $nodeMajor and PostgreSQL $pgMajorHere match the new release's versions.json"
   $newVersion = (Get-Content (Join-Path $From "app\VERSION.txt") -TotalCount 1).Trim()
   $oldVersion = (Get-Content (Join-Path $app "VERSION.txt") -TotalCount 1).Trim()
   Write-Ok "installed: $oldVersion, new: $newVersion"

@@ -12,12 +12,16 @@ $script:Tar = Join-Path $env:SystemRoot "System32\tar.exe"
 # Windows PowerShell 5.1 on older Windows 10 builds may offer only TLS 1.0 to https:// (Caddy needs 1.2+).
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-# Pinned tools, downloaded from their official GitHub releases by `npm run package` (scripts/package.mjs reads
-# these lines) and checked again by install.ps1. WinSW.NET461 runs on the .NET Framework built into Windows 10/11.
-$script:Tools = @{
-  winsw = @{ Version = "2.12.0"; File = "WinSW.NET461.exe"; Url = "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW.NET461.exe"; Sha256 = "b5066b7bbdfba1293e5d15cda3caaea88fbeab35bd5b38c41c913d492aadfc4f" }
-  caddy = @{ Version = "2.11.9"; File = "caddy_2.11.9_windows_amd64.zip"; Url = "https://github.com/caddyserver/caddy/releases/download/v2.11.9/caddy_2.11.9_windows_amd64.zip"; Sha256 = "ad93112d335ee687100c4c9f11bced16ca590377976b7fe7883882b9e797e472" }
+# Pinned versions, one place for everything: versions.json (also read by scripts/package.mjs and the app).
+# WinSW.NET461 runs on the .NET Framework built into Windows 10/11.
+$script:Versions = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "versions.json") | ConvertFrom-Json
+$script:Tools = @{}
+foreach ($t in "winsw", "caddy") {
+  $v = $script:Versions.$t
+  $script:Tools[$t] = @{ Version = $v.version; File = $v.file; Url = $v.url; Sha256 = $v.sha256 }
 }
+$script:PgMajor = [int]$script:Versions.postgresql.major
+$script:NodeMajor = [int]$script:Versions.node.major
 
 function Write-Step([string]$text) { Write-Host ""; Write-Host "== $text" -ForegroundColor Cyan }
 function Write-Ok([string]$text) { Write-Host "   OK  $text" -ForegroundColor Green }
