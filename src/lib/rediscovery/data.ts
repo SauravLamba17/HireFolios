@@ -71,7 +71,7 @@ export async function isActiveCategory(q: Q, tenantId: string, code: string) {
 export type History = { visits: VisitInput[]; cards: CardInput[] };
 
 /** Visits and scorecards of these candidates (one tenant), ready for summarize(). */
-export async function loadHistories(tenantId: string, candidateIds: string[], lists?: OptionLists): Promise<Map<string, History>> {
+export async function loadHistories(tenantId: string, candidateIds: string[], lists?: OptionLists, opts: { hideCost?: boolean } = {}): Promise<Map<string, History>> {
   const out = new Map<string, History>(candidateIds.map((id) => [id, { visits: [], cards: [] }]));
   if (!candidateIds.length) return out;
   const cats = categoryMap(lists ?? (await getOptionLists(tenantId)));
@@ -114,6 +114,7 @@ export async function loadHistories(tenantId: string, candidateIds: string[], li
       outcome: v.outcome as Outcome,
       offerStatus: v.offerStatus as OfferStatus | null,
       category: categoryOf(cats, v.category),
+      ...(opts.hideCost ? { costExpected: null, costBudget: null, costHidden: true } : {}),
     });
   }
   for (const c of cards) {
@@ -132,8 +133,8 @@ export async function loadHistories(tenantId: string, candidateIds: string[], li
   return out;
 }
 
-export async function summaries(tenantId: string, candidateIds: string[], lists?: OptionLists): Promise<Map<string, CandidateSummary & { history: History }>> {
-  const h = await loadHistories(tenantId, candidateIds, lists);
+export async function summaries(tenantId: string, candidateIds: string[], lists?: OptionLists, opts: { hideCost?: boolean } = {}): Promise<Map<string, CandidateSummary & { history: History }>> {
+  const h = await loadHistories(tenantId, candidateIds, lists, opts);
   return new Map([...h].map(([id, x]) => [id, { ...summarize(x.visits, x.cards), history: x }]));
 }
 
@@ -187,10 +188,10 @@ export type CandidateInsight = CandidateSummary & {
 };
 
 /** Summary, tags, open suggestions and score change of these candidates, in one go (one tenant). */
-export async function insights(tenantId: string, candidateIds: string[]): Promise<Map<string, CandidateInsight>> {
+export async function insights(tenantId: string, candidateIds: string[], opts: { hideCost?: boolean } = {}): Promise<Map<string, CandidateInsight>> {
   const lists = await getOptionLists(tenantId);
   const [sums, tags, dis, settings, lastRound] = await Promise.all([
-    summaries(tenantId, candidateIds, lists),
+    summaries(tenantId, candidateIds, lists, opts),
     activeTags(tenantId, candidateIds, lists),
     dismissalsOf(tenantId, candidateIds),
     getSettings(tenantId),

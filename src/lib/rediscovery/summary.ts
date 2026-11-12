@@ -21,6 +21,8 @@ export type VisitInput = {
   offeredCtc: number | null;
   joiningDate: string | null;
   joinedOn: string | null;
+  /** Cost figures withheld from this viewer (no rediscovery permission): the reason is named without them. */
+  costHidden?: boolean;
 };
 
 export type CardInput = {
@@ -107,14 +109,14 @@ export function reasonText(v: VisitInput): string | null {
   const c = v.category;
   if (v.outcome === "rejected") {
     if (!c) return v.rejectReason;
-    if (c.code === CAT.cost) return `${c.label}: ${costText({ expected: v.costExpected, budget: v.costBudget })}`;
+    if (c.code === CAT.cost && !v.costHidden) return `${c.label}: ${costText({ expected: v.costExpected, budget: v.costBudget })}`;
     return v.rejectReason && v.rejectReason !== c.label ? `${c.label}: ${v.rejectReason}` : c.label;
   }
   if (v.outcome === "no_show") return "No show";
   if (v.outcome === "withdrawn") return "Walked away";
   if (v.outcome === "offer_declined") {
     if (!c) return "Offer declined";
-    if (c.code === CAT.cost) return `Offer declined (${c.label}: ${costText({ expected: v.costExpected, budget: v.costBudget }, "offered")})`;
+    if (c.code === CAT.cost && !v.costHidden) return `Offer declined (${c.label}: ${costText({ expected: v.costExpected, budget: v.costBudget }, "offered")})`;
     return `Offer declined (${c.label})`;
   }
   return null;

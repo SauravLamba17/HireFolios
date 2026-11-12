@@ -137,7 +137,8 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
       .orderBy(desc(otherOffers.notedOn), desc(otherOffers.createdAt)),
   ]);
   const cats = categoryMap(lists);
-  const insight = (await insights(tenantId, [id])).get(id)!;
+  // cost figures are HR-only: an interviewer sees the reason without them
+  const insight = (await insights(tenantId, [id], { hideCost: !can(staff.role, "rediscovery") })).get(id)!;
   const hrOnlyView = can(staff.role, "rediscovery");
   const [contact, settings, company, contacts] = hrOnlyView
     ? await Promise.all([

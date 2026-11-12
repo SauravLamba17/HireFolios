@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { categoryForSampleReason, costGap, costText, DEFAULT_CATEGORIES, SAMPLE_REASON_CATEGORY } from "./categories";
 import { REJECT_REASONS } from "@/lib/options";
+import { makeIntakeDetails } from "@/lib/intake";
+import { defaultOptionLists } from "@/lib/lists";
 import { cardAverage, fmtScore, summarize, summarizeVisit, type CardInput, type VisitInput } from "./summary";
 import { defaultSettings, readSetting, SETTINGS, SETTING_KEYS, SettingsPatch } from "./settings";
 
@@ -100,6 +102,9 @@ describe("hiring summary", () => {
     expect(summarizeVisit(visit({ category: cat("knowledge"), rejectReason: "No relevant RCM experience" }), []).reason).toBe("Knowledge / skills: No relevant RCM experience");
     expect(summarizeVisit(visit({ costBudget: null }), []).reason).toBe("Cost / salary expectation: asked 4.2 LPA, budget not recorded");
     expect(summarizeVisit(visit({ category: null, rejectReason: "Old reason" }), []).reason).toBe("Old reason");
+    // figures withheld from viewers without the rediscovery permission (interviewers)
+    expect(summarizeVisit(visit({ costHidden: true, costExpected: null, costBudget: null }), []).reason).toBe("Cost / salary expectation: Salary expectation above budget");
+    expect(summarizeVisit(visit({ outcome: "offer_declined", costHidden: true }), []).reason).toBe("Offer declined (Cost / salary expectation)");
   });
   it("averages: card → round → visit → overall; overall field when a card has no criteria", () => {
     expect(cardAverage({ scores: {}, overall: 3 })).toBe(3);
@@ -137,6 +142,24 @@ describe("hiring summary", () => {
     const s = summarize([visit()], []);
     expect(s.latest!.line).toContain("no interview scores");
     expect(s.overallAvg).toBeNull();
+  });
+});
+
+describe("intake: optional other offer (More details)", () => {
+  const base = {
+    jobId: "00000000-0000-4000-8000-000000000000", fullName: "Priya Sharma", dateOfBirth: "1997-01-01", email: null, city: "Mohali", experienceYears: 2, experienceMonths: 0,
+    currentCtcLpa: null, expectedCtcLpa: null, hrNotes: null, nightShiftOk: true, voiceProcess: true, typingWpm: null, skills: null,
+    education: "B.Com", noticeDays: 30, languages: [], source: "Naukri", certifications: [], codingSpecialties: [], ehrSoftware: [],
+  };
+  const schema = makeIntakeDetails(defaultOptionLists());
+  it("never required: missing or empty → null", () => {
+    expect(schema.parse(base).otherOffer).toBeNull();
+    expect(schema.parse({ ...base, otherOffer: { company: "", offeredCtcLpa: null, joiningDate: null } }).otherOffer).toBeNull();
+  });
+  it("kept when any field is filled; bad values refused", () => {
+    expect(schema.parse({ ...base, otherOffer: { company: " Acme ", offeredCtcLpa: 4, joiningDate: "2026-12-01" } }).otherOffer).toEqual({ company: "Acme", offeredCtcLpa: 4, joiningDate: "2026-12-01" });
+    expect(schema.safeParse({ ...base, otherOffer: { company: null, offeredCtcLpa: 500, joiningDate: null } }).success).toBe(false);
+    expect(schema.safeParse({ ...base, otherOffer: { company: null, offeredCtcLpa: null, joiningDate: "2026-02-30" } }).success).toBe(false);
   });
 });
 

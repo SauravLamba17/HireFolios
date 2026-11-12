@@ -46,6 +46,10 @@ export async function rediscoverySmoke(c: Ctx) {
   check("3.6 summary API: not hired for cost, with the gap and the score", r.status === 200 && j.latest.status === "not_hired" && /asked 4\.2 vs budget 3\.0 LPA \(\+40%\)/.test(j.latest.line) && /avg 4\.0\/5/.test(j.latest.line), j.latest?.line);
   r = await iv(`/api/candidates/${costCandidate}/summary`);
   check("3.6 summary API: interviewer of that candidate may read it", r.status === 200, r.status);
+  {
+    const ivPage = (await (await iv(`/dashboard/candidates/${costCandidate}`)).text()).replaceAll("<!-- -->", "");
+    check("3.6 interviewer's profile view: summary yes, HR-only parts no", ivPage.includes("summary-card") && !ivPage.includes("Tags") && !ivPage.includes("Contact and call-backs") && !ivPage.includes("Other offers in hand") && !ivPage.includes("asked 4.2"), [ivPage.includes("summary-card"), ivPage.includes("Tags"), ivPage.includes("Contact and call-backs"), ivPage.includes("Other offers in hand"), ivPage.includes("asked 4.2")]);
+  }
   const [never] = await db
     .select({ id: s.candidates.id })
     .from(s.candidates)

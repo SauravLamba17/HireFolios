@@ -11,6 +11,8 @@ const base = `http://127.0.0.1:${port}`;
 const PAGES = [
   "/login", "/intake", "/dashboard", "/dashboard/drive", "/dashboard/reports", "/dashboard/privacy",
   "/dashboard/audit", "/dashboard/settings", "/dashboard/settings/lists", "/dashboard/settings/notice", "/dashboard/settings/company", "/dashboard/users", "/interview", "/tv", "/account/password", "/api/health",
+  // Phase 3.6 rediscovery
+  "/dashboard/pool", "/dashboard/bulk?needed=5&budget=4", "/dashboard/pushes", "/dashboard/suggestions", "/dashboard/callbacks", "/dashboard/joining", "/dashboard/settings/rediscovery", "/api/quicklook?q=sample",
 ];
 const BAD = /Module build failed|UnhandledSchemeError|Failed to compile|⨯|Error: /;
 
