@@ -5,6 +5,9 @@ import { usePathname } from "next/navigation";
 
 // Rediscovery section (HR, manager, admin). Pages: docs/REDISCOVERY.md.
 export const REDISCOVERY_TABS = [
+  { href: "/dashboard/pool", label: "Pool" },
+  { href: "/dashboard/bulk", label: "Bulk hiring" },
+  { href: "/dashboard/pushes", label: "Pushes" },
   { href: "/dashboard/suggestions", label: "Suggestions" },
   { href: "/dashboard/callbacks", label: "Call-backs" },
 ];

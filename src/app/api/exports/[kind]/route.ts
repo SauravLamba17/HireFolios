@@ -3,7 +3,10 @@ import { db } from "@/db";
 import { dataExports } from "@/db/schema";
 import { parseFilters, searchCandidates } from "@/lib/candidate-search";
 import { exportCompany } from "@/lib/company";
-import { CANDIDATE_COLUMNS, DRIVE_COLUMNS, JOINED_COLUMNS, sheet, toCsv, toXlsx, type DriveExportRow, type JoinedExportRow } from "@/lib/exports";
+import { BULK_COLUMNS, CANDIDATE_COLUMNS, DRIVE_COLUMNS, JOINED_COLUMNS, POOL_COLUMNS, PUSH_COLUMNS, sheet, toCsv, toXlsx, type DriveExportRow, type JoinedExportRow } from "@/lib/exports";
+import { isUuid } from "@/db";
+import { bulkList, parseBulk, parsePool, searchPool } from "@/lib/rediscovery/pool";
+import { PUSH_STATUSES, type PushStatus } from "@/lib/rediscovery/rank";
 import { formatDateTimeIST, todayIST } from "@/lib/ist";
 import { OUTCOME_LABELS } from "@/lib/options";
 import { requireStaffApi } from "@/lib/session";
@@ -77,6 +80,35 @@ export async function GET(req: Request, { params }: { params: Promise<{ kind: st
     body = csv ? toCsv(JOINED_COLUMNS, list) : await toXlsx([sheet("Joined", JOINED_COLUMNS, list)], company);
     type = csv ? "text/csv; charset=utf-8" : XLSX;
     filename = `joined-employees-${todayIST()}.${csv ? "csv" : "xlsx"}`;
+  } else if (kind === "pool") {
+    const f = parsePool(q);
+    const { rows: list } = await searchPool(tenantId, f, { all: true });
+    rows = list.length;
+    filters = Object.fromEntries(Object.entries(f).filter(([k, v]) => k !== "page" && v !== undefined).map(([k, v]) => [k, String(v)]));
+    body = await toXlsx([sheet("Pool", POOL_COLUMNS, list.map((r) => ({ ...r, change: r.change?.text ?? null, tags: r.tagLabels.join(", ") })))], company);
+    filename = `rediscovery-pool-${todayIST()}.xlsx`;
+  } else if (kind === "bulk") {
+    const b = parseBulk(Object.fromEntries([...url.searchParams.keys()].map((k) => [k, url.searchParams.getAll(k).length > 1 ? url.searchParams.getAll(k) : url.searchParams.get(k)!])));
+    const { rows: list } = await bulkList(tenantId, b);
+    rows = list.length;
+    filters = { jobs: String(b.jobs.length), budget: String(b.budget ?? "") };
+    body = await toXlsx([sheet("Bulk list", BULK_COLUMNS, list.map((r, i) => ({ ...r, rank: i + 1, score: r.ranked.score, why: r.ranked.why })))], company);
+    filename = `bulk-list-${todayIST()}.xlsx`;
+  } else if (kind === "push") {
+    const id = q.id ?? "";
+    if (!isUuid(id)) return Response.json({ error: "Not found" }, { status: 404 });
+    const list = [
+      ...(await db.execute<{ rank: number; full_name: string; mobile: string; city: string | null; status: string; score: number; why: string }>(sql`
+        select m.rank, c.full_name, c.mobile, c.city, m.status, m.score, m.why
+        from push_members m join candidates c on c.id = m.candidate_id join hiring_pushes p on p.id = m.push_id
+        where p.id = ${id} and p.tenant_id = ${tenantId} order by m.rank`)),
+    ];
+    const [own] = await db.execute<{ n: number }>(sql`select count(*)::int as n from hiring_pushes where id = ${id} and tenant_id = ${tenantId}`);
+    if (!own?.n) return Response.json({ error: "Not found" }, { status: 404 });
+    rows = list.length;
+    filters = { id };
+    body = await toXlsx([sheet("Push", PUSH_COLUMNS, list.map((r) => ({ ...r, status: PUSH_STATUSES[r.status as PushStatus] ?? r.status })))], company);
+    filename = `hiring-push-${todayIST()}.xlsx`;
   } else {
     return Response.json({ error: "Not found" }, { status: 404 });
   }

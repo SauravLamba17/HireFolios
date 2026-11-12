@@ -5,6 +5,7 @@ import { sql } from "drizzle-orm";
 import { db, pgClient } from "@/db";
 import * as s from "@/db/schema";
 import { quickLook } from "@/lib/rediscovery/quicklook";
+import { bulkList, parseBulk, parsePool, searchPool } from "@/lib/rediscovery/pool";
 
 const N = Number(process.env.PERF_CANDIDATES ?? 10_000);
 const RUN = Date.now().toString(36);
@@ -90,6 +91,23 @@ async function main() {
     await time("quick-look: name with a typo (Kavta Sharma)", () => quickLook(tenantId, "Kavta Sharma"));
     await time("quick-look: 2 letters (pr)", () => quickLook(tenantId, "pr"));
     await time("quick-look: 4 mobile digits (1234)", () => quickLook(tenantId, "1234"));
+    const pool = await time("pool page: all tags, sorted by score", () => searchPool(tenantId, parsePool({})));
+    console.log(`  pool size: ${pool.total}`);
+    await time("pool page: score ≥ 3.5, CTC ≤ 4 LPA, sort by change", () => searchPool(tenantId, parsePool({ scoreMin: "3.5", ctcMax: "4", sort: "change" })));
+    const bulk = await time("bulk list: budget 4.0 LPA, night shift", () => bulkList(tenantId, parseBulk({ needed: "10", budget: "4", night: "yes" })));
+    console.log(`  bulk list: ${bulk.rows.length} ranked, left out ${JSON.stringify(bulk.excluded)}`);
+    if (process.env.PERF_PROFILE) {
+      const t0 = performance.now();
+      const s = await import("@/lib/rediscovery/data");
+      const ids = (await db.execute<{ id: string }>(sql`select id from candidates where tenant_id = ${tenantId} limit 1200`)).map((r) => r.id);
+      const t1 = performance.now();
+      await s.summaries(tenantId, ids);
+      const p = await import("@/lib/rediscovery/pool");
+      const t2 = performance.now();
+      const all = await p.baseRows(tenantId, []);
+      console.log(`baseRows(all ${all.length}): ${(performance.now() - t2).toFixed(0)} ms`);
+      console.log(`summaries(1200): ${(performance.now() - t1).toFixed(0)} ms (ids ${(t1 - t0).toFixed(0)} ms)`);
+    }
     const plan = await db.transaction(async (tx) => {
       await tx.execute(sql`select set_config('pg_trgm.word_similarity_threshold', '0.4', true)`);
       return tx.execute<{ "QUERY PLAN": string }>(sql`explain analyze select c.id from candidates c where c.tenant_id = ${tenantId} and ('Kavta Sharma' <% c.full_name or c.full_name ilike '%Kavta Sharma%') limit 8`);

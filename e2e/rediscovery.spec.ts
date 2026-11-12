@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { hashPassword } from "better-auth/crypto";
+import ExcelJS from "exceljs";
 import postgres from "postgres";
 import { shoot, signIn } from "./helpers";
 
@@ -291,4 +292,68 @@ test("D: contact twice → cooling warning; call-back set → due after a clock 
   await expect(h.getByRole("group", { name: "Contact" })).toHaveCount(0);
   await h.goto("/dashboard/callbacks");
   await expect(h.getByRole("listitem", { name: `Call-back: ${people.R3.name}` })).toHaveCount(0);
+});
+
+async function download(page: Page, click: () => Promise<void>) {
+  const [d] = await Promise.all([page.waitForEvent("download"), click()]);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(fs.readFileSync((await d.path())!) as unknown as ExcelJS.Buffer);
+  const ws = wb.worksheets[0];
+  const rows: string[][] = [];
+  ws.eachRow((r) => rows.push((r.values as unknown[]).slice(1).map((v) => String(v ?? ""))));
+  return { name: d.suggestedFilename(), rows };
+}
+
+test("E: tagged cost rejection is in the pool and in a bulk list above the ask, not below; Do not contact hidden; push + exports", async () => {
+  await sql`insert into candidate_tags (tenant_id, candidate_id, tag_code, source, note) values (${tenantId}, ${people.R3.id}, 'reconsider', 'manual', 'seed')`;
+  const h = pages.hr;
+  await h.goto("/dashboard/pool");
+  const pool = h.getByRole("list", { name: "Pool" });
+  await expect(pool.getByRole("listitem", { name: `Pool: ${people.P1.name}` })).toContainText("Good but high cost");
+  await expect(pool.getByRole("listitem", { name: `Pool: ${people.R3.name}` })).toHaveCount(0); // do not contact
+  await shoot(h, "pool-page", { width: 1366, height: 768 });
+  await h.goto("/dashboard/pool?dnc=yes");
+  await expect(h.getByRole("listitem", { name: `Pool: ${people.R3.name}` })).toContainText("Do not contact");
+  const poolX = await download(h, () => h.goto("/dashboard/pool").then(() => h.getByRole("link", { name: "Export to Excel" }).click()));
+  expect(poolX.rows[0]).toEqual(["Name", "Mobile", "City", "Education", "Experience", "Expected CTC (LPA)", "Avg score (of 5)", "Score change", "Last visit", "Tags", "Talent-pool consent", "Summary"]);
+  expect(poolX.rows.some((r) => r[0] === people.P1.name && r[9].includes("Good but high cost"))).toBe(true);
+  expect(poolX.rows.some((r) => r[0] === people.R3.name)).toBe(false);
+
+  const list = (p: Page) => p.getByRole("list", { name: "Ranked list" });
+  await h.goto("/dashboard/bulk?needed=10&budget=4.5&night=yes");
+  await expect(list(h).getByRole("listitem", { name: new RegExp(people.P1.name) })).toContainText("Cost reject · asked 4.2 ≤ budget 4.5");
+  await expect(list(h).getByRole("listitem", { name: new RegExp(people.R3.name) })).toHaveCount(0);
+  await expect(h.getByTestId("exclusions")).toContainText(/Do not contact: [1-9]/);
+  await shoot(h, "bulk-page", { width: 1366, height: 768 });
+  await h.goto("/dashboard/bulk?needed=10&budget=4");
+  await expect(list(h).getByRole("listitem", { name: new RegExp(people.P1.name) })).toContainText("+5% over budget (asked 4.2)");
+  await h.goto("/dashboard/bulk?needed=10&budget=3");
+  await expect(h.getByRole("listitem", { name: new RegExp(people.P1.name) })).toHaveCount(0);
+  await expect(h.getByTestId("exclusions")).toContainText(/Too far over budget: [1-9]/);
+
+  // save as a push, then work it
+  await h.goto("/dashboard/bulk?needed=10&budget=4.5&night=yes");
+  const bulkX = await download(h, () => h.getByRole("link", { name: "Export to Excel" }).click());
+  expect(bulkX.rows[0]).toEqual(["Rank", "Score (0-100)", "Name", "Mobile", "City", "Expected CTC (LPA)", "Avg score (of 5)", "Last visit", "Why on the list"]);
+  expect(bulkX.rows.some((r) => r[2] === people.P1.name && r[8].startsWith("Cost reject"))).toBe(true);
+  await h.getByLabel(/Save this list as a hiring push/).fill(`AR callers ${run}`);
+  await h.getByRole("button", { name: "Save push" }).click();
+  await expect(h.getByRole("heading", { name: `AR callers ${run}` })).toBeVisible();
+  const item = h.getByRole("listitem", { name: `Push: ${people.P1.name}` });
+  await item.getByLabel(`Status of ${people.P1.name}`).selectOption("interested");
+  await expect(h.getByTestId("push-progress")).toContainText("Interested 1");
+  await expect(h.getByTestId("push-progress")).toContainText("Called 1");
+  await item.getByLabel(`Status of ${people.P1.name}`).selectOption("booked");
+  await expect(h.getByTestId("push-progress")).toContainText("Booked for interview 1");
+  await shoot(h, "push-page", { width: 1366, height: 768 });
+  const pushX = await download(h, () => h.getByRole("link", { name: "Export to Excel" }).click());
+  expect(pushX.rows[0]).toEqual(["Rank", "Name", "Mobile", "City", "Status", "Score (0-100)", "Why on the list"]);
+  expect(pushX.rows.find((r) => r[1] === people.P1.name)?.[4]).toBe("Booked for interview");
+  const audits = await sql`select action, meta from audit_log where tenant_id = ${tenantId} and action in ('push.create', 'push.status', 'export.download')`;
+  expect(audits.filter((a) => a.action === "push.status")).toHaveLength(2);
+  expect(JSON.stringify(audits)).not.toContain(people.P1.name);
+
+  // the same person in a second list: warned
+  await h.goto("/dashboard/bulk?needed=10&budget=4.5&night=yes");
+  await expect(list(h).getByRole("listitem", { name: new RegExp(people.P1.name) })).toContainText(`already in push AR callers ${run}`);
 });

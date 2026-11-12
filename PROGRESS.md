@@ -384,7 +384,11 @@ Phase 3 (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is 
       consent recorded after the visit / renewed / withdrawn (deletion dates cleared / restarted from the withdrawal day), talent
       pool keep period in the deletion job (`planPurge` + `candidateErasable`), Settings dry run of pool candidates expiring in
       30 days
-- [ ] **E** — pool, bulk ranking, hiring pushes
+- [x] **E** — `/dashboard/pool` (tagged people; 15 URL filters, 4 sorts, 25 per page, Do not contact hidden unless asked,
+      withdrawn consent never shown, Excel export), `/dashboard/bulk` (sources, always-excluded counts, transparent ranking
+      `rank.ts` with weights from Settings, "why" per row, "already in push X"), hiring pushes (`/dashboard/pushes`, per-person
+      status, progress, contact with purpose bulk push, Excel export), set-based base query (10k candidates: pool 99–229 ms,
+      bulk 324 ms)
 - [ ] **F** — joining-risk hints, reports, demo data, docs, final regression
 
 ## Phase 4 — next

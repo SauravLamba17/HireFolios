@@ -125,6 +125,7 @@ async function cleanup(tenantIds: string[], root: string | null) {
   await db.delete(s.scorecards).where(inArray(s.scorecards.tenantId, tenantIds));
   await db.delete(s.queueEvents).where(inArray(s.queueEvents.tenantId, tenantIds));
   await db.delete(s.consents).where(inArray(s.consents.tenantId, tenantIds));
+  await db.delete(s.dataExports).where(inArray(s.dataExports.tenantId, tenantIds));
   await db.delete(s.applications).where(inArray(s.applications.tenantId, tenantIds));
   await db.delete(s.panels).where(inArray(s.panels.tenantId, tenantIds));
   await db.delete(s.drives).where(inArray(s.drives.tenantId, tenantIds));

@@ -238,8 +238,8 @@ averages); if they share none, the visit averages are compared and labelled "dif
   rehire, Do not contact, joined, past retention without talent-pool consent, in an active visit (in progress or
   selected), more than `bulk_over_budget_percent` over budget. Positions, when chosen, keep people who applied for one of
   them before.
-- **Ranking** (`rank.ts`, pure, weights from Settings): each part 0–1 — budget fit (≤ budget 1; over: falls to 0 at
-  the over-budget limit; unknown 0.5), score ((avg − 1) / 4; none 0), skills match (share of asked certifications /
+- **Ranking** (`rank.ts`, pure, weights from Settings): each part 0–1 — budget fit (≤ budget 1; over: falls from 1 to 0.5 at
+  the over-budget limit, beyond it the person is left out; unknown 0.5), score ((avg − 1) / 4; none 0), skills match (share of asked certifications /
   software / minimum experience met; nothing asked 1), shift fit (night / voice asked and OK 1, unknown 0.5, no 0),
   improvement (0.5 + change / 2, clamped), recency (1 − months since last visit / recency months). Score = weighted
   mean × 100. Every row says why: `Cost reject, asked 3.8 ≤ budget 4.0 · avg 4.2 · CPC · Epic · night OK`. A

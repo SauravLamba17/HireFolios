@@ -3,13 +3,15 @@
 import "server-only";
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Tx } from "@/db";
-import { applications, callbacks, candidates, candidateTags, consents, contactLog, doNotContact, hiringPushes, optionItems, otherOffers, suggestionDismissals, tenants } from "@/db/schema";
+import { applications, callbacks, candidates, candidateTags, consents, contactLog, doNotContact, hiringPushes, optionItems, otherOffers, pushMembers, suggestionDismissals, tenants } from "@/db/schema";
 import { FlowError, NotFoundError } from "@/lib/flow";
 import { APP_UTC_OFFSET, todayIST } from "@/lib/ist";
 import { getActiveNotice } from "@/lib/notice-db";
 import { TAG } from "@/lib/rediscovery/categories";
 import { whatsappAllowed, type Channel, type ConsentChannel, type ContactOutcome, type Purpose } from "@/lib/rediscovery/contact";
 import { insights } from "@/lib/rediscovery/data";
+import { bulkList, type BulkInput } from "@/lib/rediscovery/pool";
+import type { PushStatus } from "@/lib/rediscovery/rank";
 import type { Staff } from "@/lib/session";
 import { audit } from "@/lib/staff";
 
@@ -274,4 +276,30 @@ export async function withdrawConsent(tx: Tx, staff: Staff, candidateId: string,
     .where(and(eq(callbacks.tenantId, staff.tenantId), eq(callbacks.candidateId, candidateId), eq(callbacks.status, "open")))
     .returning({ id: callbacks.id });
   await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "consent.withdraw", entityType: "candidate", entityId: candidateId, meta: { consentId: k.id, visitsRestarted: restarted.length, callbacksClosed: closed.length } });
+}
+
+// ---------- hiring pushes (sub-phase E) ----------
+
+/** At most this many people are saved in one push (the list is ranked, so these are the best ones). */
+export const PUSH_MAX = 200;
+
+/** Saves the bulk list as a named push. The list is rebuilt here from the criteria (never taken from the browser). */
+export async function createPush(tx: Tx, staff: Staff, input: { name: string; criteria: BulkInput }) {
+  const { rows } = await bulkList(staff.tenantId, input.criteria);
+  if (!rows.length) throw new FlowError("Nobody matches these criteria, so there is nothing to save.");
+  const take = rows.slice(0, PUSH_MAX);
+  const [p] = await tx.insert(hiringPushes).values({ tenantId: staff.tenantId, name: input.name, criteria: input.criteria, createdBy: staff.id }).returning({ id: hiringPushes.id });
+  await tx.insert(pushMembers).values(take.map((r, i) => ({ tenantId: staff.tenantId, pushId: p.id, candidateId: r.id, rank: i + 1, score: r.ranked.score, why: r.ranked.why, updatedBy: staff.id })));
+  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "push.create", entityType: "hiring_push", entityId: p.id, meta: { members: take.length, needed: input.criteria.needed } });
+  return { id: p.id, members: take.length };
+}
+
+export async function setPushStatus(tx: Tx, staff: Staff, pushId: string, input: { memberId: string; status: PushStatus }) {
+  const [m] = await tx
+    .update(pushMembers)
+    .set({ status: input.status, updatedBy: staff.id, updatedAt: new Date() })
+    .where(and(eq(pushMembers.id, input.memberId), eq(pushMembers.pushId, pushId), eq(pushMembers.tenantId, staff.tenantId)))
+    .returning({ id: pushMembers.id, candidateId: pushMembers.candidateId });
+  if (!m) throw new NotFoundError("Not on this push.");
+  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "push.status", entityType: "hiring_push", entityId: pushId, meta: { memberId: m.id, candidateId: m.candidateId, status: input.status } });
 }

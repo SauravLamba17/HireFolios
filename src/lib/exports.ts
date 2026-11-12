@@ -95,6 +95,62 @@ export const JOINED_COLUMNS: Column<JoinedExportRow>[] = [
   { header: "Offered CTC (LPA)", width: 12, value: (r) => lpa(r.offered_ctc) },
 ];
 
+// ---- Phase 3.6: rediscovery pool, bulk list, hiring push (HR-only data, no photos) ----
+const score1 = (v: number | null) => (v === null ? null : Math.round(v * 10) / 10);
+
+export type PoolExportRow = {
+  full_name: string;
+  mobile: string;
+  city: string | null;
+  qualification: string | null;
+  experience_months: number | null;
+  expected_ctc: number | null;
+  avg: number | null;
+  change: string | null;
+  last_visit: string;
+  tags: string;
+  in_pool: boolean;
+  line: string;
+};
+export const POOL_COLUMNS: Column<PoolExportRow>[] = [
+  { header: "Name", width: 28, value: (r) => r.full_name },
+  { header: "Mobile", width: 14, value: (r) => r.mobile },
+  { header: "City", width: 16, value: (r) => r.city },
+  { header: "Education", width: 18, value: (r) => r.qualification },
+  { header: "Experience", width: 12, value: (r) => experienceLabel(r.experience_months) },
+  { header: "Expected CTC (LPA)", width: 12, value: (r) => lpa(r.expected_ctc) },
+  { header: "Avg score (of 5)", width: 10, value: (r) => score1(r.avg) },
+  { header: "Score change", width: 22, value: (r) => r.change },
+  { header: "Last visit", width: 13, value: (r) => day(r.last_visit) },
+  { header: "Tags", width: 30, value: (r) => r.tags },
+  { header: "Talent-pool consent", width: 10, value: (r) => (r.in_pool ? "Yes" : "No") },
+  { header: "Summary", width: 60, value: (r) => r.line },
+];
+
+export type BulkExportRow = { rank: number; score: number; full_name: string; mobile: string; city: string | null; expected_ctc: number | null; avg: number | null; last_visit: string; why: string };
+export const BULK_COLUMNS: Column<BulkExportRow>[] = [
+  { header: "Rank", width: 6, value: (r) => r.rank },
+  { header: "Score (0-100)", width: 8, value: (r) => r.score },
+  { header: "Name", width: 28, value: (r) => r.full_name },
+  { header: "Mobile", width: 14, value: (r) => r.mobile },
+  { header: "City", width: 16, value: (r) => r.city },
+  { header: "Expected CTC (LPA)", width: 12, value: (r) => lpa(r.expected_ctc) },
+  { header: "Avg score (of 5)", width: 10, value: (r) => score1(r.avg) },
+  { header: "Last visit", width: 13, value: (r) => day(r.last_visit) },
+  { header: "Why on the list", width: 70, value: (r) => r.why },
+];
+
+export type PushExportRow = { rank: number; full_name: string; mobile: string; city: string | null; status: string; score: number; why: string };
+export const PUSH_COLUMNS: Column<PushExportRow>[] = [
+  { header: "Rank", width: 6, value: (r) => r.rank },
+  { header: "Name", width: 28, value: (r) => r.full_name },
+  { header: "Mobile", width: 14, value: (r) => r.mobile },
+  { header: "City", width: 16, value: (r) => r.city },
+  { header: "Status", width: 20, value: (r) => r.status },
+  { header: "Score (0-100)", width: 8, value: (r) => r.score },
+  { header: "Why on the list", width: 70, value: (r) => r.why },
+];
+
 /** CSV text (UTF-8, Excel-friendly). Cells that start with = + - @ are prefixed with ' so they can't run as formulas. */
 export function toCsv<T>(columns: Column<T>[], rows: T[]) {
   const cell = (v: string | number | null) => {

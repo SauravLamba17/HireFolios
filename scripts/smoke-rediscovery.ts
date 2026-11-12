@@ -202,5 +202,43 @@ export async function rediscoverySmoke(c: Ctx) {
     ["contact.log", "callback.set", "callback.snooze", "callback.done", "contact.block", "contact.unblock", "consent.record", "consent.withdraw"].every((a) => audits3.some((x) => x.action === a)) &&
       audits3.every((a) => !c.pii.some((p) => JSON.stringify(a.meta ?? {}).includes(p)) && !/rang|Monday|phone/.test(JSON.stringify(a.meta ?? {}).replace('"phone"', ""))),
   );
+
+  // ---------- E: pool, bulk list, hiring push, exports ----------
+  page = await text(await hr("/dashboard/pool"));
+  check("3.6 pool lists the tagged candidate", page.includes(`href="/dashboard/candidates/${costCandidate}"`) && page.includes("Good but high cost"));
+  check("3.6 pool: interviewer redirected", (await iv("/dashboard/pool")).status === 307);
+  page = await text(await hr("/dashboard/pool?scoreMin=4.5"));
+  check("3.6 pool score filter (avg 4.0 < 4.5 → hidden)", !page.includes(`href="/dashboard/candidates/${costCandidate}"`));
+  page = await text(await hr("/dashboard/pool?scoreMin=bad&page=-3&sort=zzz"));
+  check("3.6 pool: bad URL values ignored, not a 500", page.includes("Rediscovery pool"));
+  page = await text(await hr("/dashboard/bulk?needed=5&budget=5"));
+  check("3.6 bulk list builds with exclusion counts and the ranking panel", page.includes("How this list is ranked") && page.includes("Always left out") && /Do not rehire: \d+/.test(page));
+  page = await text(await hr("/dashboard/bulk?needed=5&budget=3"));
+  check("3.6 bulk list below the ask (3.0 vs 4.2) leaves the cost candidate out", !page.includes(`href="/dashboard/candidates/${costCandidate}"`));
+  r = await hr("/api/pushes", json({ name: "Smoke AR callers", criteria: { needed: 5, budget: 5, jobs: [], cert: [], ehr: [] } }));
+  const pj = await r.json();
+  const pushId = pj.result?.id as string | undefined;
+  const nobody = (await hr("/api/pushes", json({ name: "Smoke empty push", criteria: { needed: 5, budget: 0.1, jobs: [], cert: ["NO-SUCH-CERT"], ehr: [] } }))).status;
+  check("3.6 push saved from criteria (or refused when nobody matches)", (r.status === 200 && Boolean(pushId)) || (r.status === 400 && /Nobody/.test(pj.error)), pj);
+  if (pushId) {
+    const members = await db.select().from(s.pushMembers).where(eq(s.pushMembers.pushId, pushId));
+    check("3.6 push members have rank, score and reason", members.length > 0 && members.every((m) => m.rank > 0 && m.why.length > 0 && m.status === "to_call"), members.length);
+    r = await hr(`/api/pushes/${pushId}`, json({ action: "status", memberId: members[0].id, status: "interested" }));
+    check("3.6 push status change", r.status === 200, r.status);
+    check("3.6 push status: unknown status → 400", (await hr(`/api/pushes/${pushId}`, json({ action: "status", memberId: members[0].id, status: "maybe" }))).status === 400);
+    check("3.6 push of another tenant → 404 (status) and 404 (page)", (await hrB(`/api/pushes/${pushId}`, json({ action: "status", memberId: members[0].id, status: "hired" }))).status === 404 && (await hrB(`/dashboard/pushes/${pushId}`)).status === 404);
+    page = await text(await hr(`/dashboard/pushes/${pushId}`));
+    check("3.6 push page shows progress", page.includes("Interested 1") && page.includes("Called 1"));
+    const x = await hr(`/api/exports/push?id=${pushId}`);
+    check("3.6 push export (xlsx)", x.status === 200 && (x.headers.get("content-type") ?? "").includes("spreadsheetml"), x.status);
+    check("3.6 push export of another tenant → 404", (await as("hrB")(`/api/exports/push?id=${pushId}`)).status === 404);
+  }
+  check("3.6 empty push refused", nobody === 400, nobody);
+  for (const k of ["pool", "bulk?needed=5&budget=5"]) {
+    const x = await hr(`/api/exports/${k}`);
+    check(`3.6 ${k.split("?")[0]} export (xlsx)`, x.status === 200 && (x.headers.get("content-type") ?? "").includes("spreadsheetml"), x.status);
+  }
+  const ex = await db.select().from(s.dataExports).where(eq(s.dataExports.tenantId, c.tenantA));
+  check("3.6 exports logged (pool, bulk, push)", ["pool", "bulk"].every((k) => ex.some((e) => e.kind === k)) && (!pushId || ex.some((e) => e.kind === "push")));
   return { costCandidate };
 }
