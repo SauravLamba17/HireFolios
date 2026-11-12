@@ -378,7 +378,12 @@ Phase 3 (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is 
       change, tags; "/" focus, arrows, Enter, Esc; combobox ARIA; `GET /api/quicklook`), trigram index on mobile, profile Summary card
       (who they are, visits at a glance, score change, data kept / deletes on), `scripts/perf-rediscovery.ts` (10k candidates:
       quick-look 108 ms typo name, 100 ms 2 letters, 12 ms 4 digits)
-- [ ] **D** — contact log, cooling, templates, do not contact, call-backs, consent after the visit, keep period
+- [x] **D** — contact log (Call `tel:+91`, WhatsApp `wa.me` click-to-chat with EN / HI templates, Mark contacted; purpose,
+      outcome, note), soft cooling warning (IST days), WhatsApp only with consent, Do not contact (admin clears with a note),
+      call-backs (default date = decision + notice days, `/dashboard/callbacks`, dashboard card, snooze / done, quick-look chip),
+      consent recorded after the visit / renewed / withdrawn (deletion dates cleared / restarted from the withdrawal day), talent
+      pool keep period in the deletion job (`planPurge` + `candidateErasable`), Settings dry run of pool candidates expiring in
+      30 days
 - [ ] **E** — pool, bulk ranking, hiring pushes
 - [ ] **F** — joining-risk hints, reports, demo data, docs, final regression
 

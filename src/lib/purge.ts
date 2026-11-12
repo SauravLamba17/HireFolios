@@ -9,6 +9,7 @@ import { applications, candidateFiles, candidates, consents, queueEvents, scorec
 import { config, inOfficeHours } from "@/lib/config";
 import { uploadRoot } from "@/lib/files";
 import type { Outcome } from "@/lib/flow";
+import { SETTINGS } from "@/lib/rediscovery/settings";
 import { candidateErasable, photoErasable } from "@/lib/retention";
 import { audit } from "@/lib/staff";
 
@@ -22,21 +23,35 @@ type VisitRow = {
   purge_after: string | Date | null;
   photo_purge_after: string | Date | null;
   talent_pool: boolean;
+  pool_until: string | Date | null; // end of the talent-pool keep period (Phase 3.6)
 };
 
 export type PurgePlan = { tenantId: string; photos: { fileId: string; key: string }[]; candidates: string[] };
 
 /** What the job would delete at `now` (dry run). Optionally one tenant only. */
 export async function planPurge(now: Date, tenantId?: string): Promise<PurgePlan[]> {
+  const at = now.toISOString();
+  // talent pool keep period per tenant (Settings → Rediscovery), default from settings.ts until saved
+  const keepMonths = sql`coalesce((select (s.value #>> '{}')::int from tenant_settings s where s.tenant_id = c.tenant_id and s.key = 'talent_pool_keep_months'),
+                                   ${SETTINGS.talent_pool_keep_months.default})`;
   const rows = await db.execute<VisitRow>(sql`
-    select a.tenant_id, a.candidate_id, a.id as app_id, a.outcome, a.purge_after, a.photo_purge_after,
-      coalesce((select k.talent_pool and k.withdrawn_at is null from consents k
-                where k.candidate_id = a.candidate_id order by k.accepted_at desc limit 1), false) as talent_pool
-    from applications a
+    with pool as (
+      select c.id as candidate_id, c.tenant_id,
+             coalesce(lk.talent_pool and lk.withdrawn_at is null, false) as talent_pool,
+             greatest((select max(v.token_date) from applications v where v.candidate_id = c.id)::timestamp at time zone 'Asia/Kolkata', lk.accepted_at)
+               + make_interval(months => ${keepMonths}) as pool_until
+      from candidates c
+      left join lateral (select k.talent_pool, k.withdrawn_at, k.accepted_at from consents k where k.candidate_id = c.id order by k.accepted_at desc limit 1) lk on true
+      where true ${tenantId ? sql`and c.tenant_id = ${tenantId}` : sql``}
+    )
+    select a.tenant_id, a.candidate_id, a.id as app_id, a.outcome, a.purge_after, a.photo_purge_after, p.talent_pool, p.pool_until
+    from applications a join pool p on p.candidate_id = a.candidate_id
     where a.candidate_id in (
       select candidate_id from applications
-      where (purge_after <= ${now.toISOString()}::timestamptz or photo_purge_after <= ${now.toISOString()}::timestamptz)
-        ${tenantId ? sql`and tenant_id = ${tenantId}` : sql``})`);
+      where (purge_after <= ${at}::timestamptz or photo_purge_after <= ${at}::timestamptz)
+        ${tenantId ? sql`and tenant_id = ${tenantId}` : sql``}
+      union
+      select candidate_id from pool where talent_pool and pool_until <= ${at}::timestamptz)`);
   const byCandidate = new Map<string, VisitRow[]>();
   for (const r of rows) byCandidate.set(r.candidate_id, [...(byCandidate.get(r.candidate_id) ?? []), r]);
 
@@ -45,8 +60,10 @@ export async function planPurge(now: Date, tenantId?: string): Promise<PurgePlan
   const photoApps: { tenantId: string; appId: string }[] = [];
   for (const [candidateId, visits] of byCandidate) {
     const pool = visits[0].talent_pool;
+    const until = toDate(visits[0].pool_until);
+    const poolExpired = pool && until !== null && until.getTime() <= now.getTime();
     const asVisits = visits.map((v) => ({ outcome: v.outcome, purgeAfter: toDate(v.purge_after), photoPurgeAfter: toDate(v.photo_purge_after) }));
-    if (candidateErasable(asVisits, pool, now)) {
+    if (candidateErasable(asVisits, pool, now, poolExpired)) {
       plan(visits[0].tenant_id).candidates.push(candidateId);
       continue;
     }

@@ -231,3 +231,64 @@ test("C: returning candidate's card: 3 visits, score change, latest line; interv
   await expect(iv.getByRole("combobox", { name: "Quick look: name or mobile" })).toHaveCount(0);
   expect((await iv.request.get(`/api/quicklook?q=${encodeURIComponent("Rohit")}`)).status()).toBe(403);
 });
+
+test("D: contact twice → cooling warning; call-back set → due after a clock shift → snooze → done; Do not contact hides", async () => {
+  const h = pages.hr;
+  await h.goto(`/dashboard/candidates/${people.P2.id}`);
+  const box = h.getByRole("region", { name: /Contact and call-backs/ });
+  const contact = box.getByRole("group", { name: "Contact" });
+  await contact.getByRole("button", { name: "Mark contacted" }).click();
+  await contact.getByLabel("Outcome").selectOption("call_later");
+  await contact.getByRole("button", { name: "Save contact" }).click();
+  await expect(box.getByRole("list", { name: "Contact log" })).toContainText("Call later");
+  await expect(contact.getByTestId("cooling")).toHaveText(`Contacted today by ${who.hr.name} — contact again?`);
+  // second contact inside the cooling period: the warning asks first; Cancel = nothing happens
+  await contact.getByRole("button", { name: "WhatsApp" }).click();
+  await expect(contact.getByTestId("wa-preview")).toContainText(`Hello ${people.P2.name}`);
+  const asked: string[] = [];
+  h.once("dialog", (d) => {
+    asked.push(d.message());
+    void d.dismiss();
+  });
+  await contact.getByRole("link", { name: "Open WhatsApp" }).click();
+  expect(asked[0]).toContain("Contacted today by");
+  await expect(contact.getByRole("form", { name: "Log the contact" })).toHaveCount(0);
+  await shoot(h, "profile-contact-callbacks", { width: 1366, height: 768 });
+
+  // call-back with the default date, then the clock moves past it
+  await box.getByRole("button", { name: "Set call-back" }).click();
+  await expect(box.getByText(/Call-back on/)).toBeVisible();
+  await sql`update callbacks set due_on = ${new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(daysAgo(2))} where candidate_id = ${people.P2.id}`;
+  await h.goto("/dashboard/callbacks");
+  const item = h.getByRole("listitem", { name: `Call-back: ${people.P2.name}` });
+  await expect(item).toContainText("Overdue since");
+  await shoot(h, "callbacks-page", { width: 1366, height: 768 });
+  const tomorrow = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(Date.now() + 864e5));
+  await item.getByRole("button", { name: "Snooze" }).click();
+  await item.getByLabel("Snooze to").fill(tomorrow);
+  await item.getByRole("button", { name: "Snooze", exact: true }).last().click();
+  await expect(h.getByRole("region", { name: /Due now/ }).getByRole("listitem", { name: `Call-back: ${people.P2.name}` })).toHaveCount(0);
+  await expect(h.getByText("Due now (0)")).toBeVisible();
+  await sql`update callbacks set due_on = ${today} where candidate_id = ${people.P2.id}`;
+  await h.reload();
+  const again = h.getByRole("listitem", { name: `Call-back: ${people.P2.name}` });
+  await again.getByRole("button", { name: "Done" }).click();
+  await again.getByLabel("Outcome").selectOption("interested");
+  await again.getByRole("button", { name: "Save" }).click();
+  await expect(h.getByText("Due now (0)")).toBeVisible();
+  const [cb] = await sql`select status, outcome from callbacks where candidate_id = ${people.P2.id}`;
+  expect(cb).toEqual({ status: "done", outcome: "interested" });
+
+  // Do not contact: a due call-back disappears and the profile has no contact buttons
+  await sql`insert into callbacks (tenant_id, candidate_id, due_on) values (${tenantId}, ${people.R3.id}, ${today})`;
+  await h.reload();
+  await expect(h.getByRole("listitem", { name: `Call-back: ${people.R3.name}` })).toBeVisible();
+  await h.goto(`/dashboard/candidates/${people.R3.id}`);
+  await h.getByText("They asked not to be contacted…").click();
+  await h.getByLabel("What did they say?").fill("Please do not call me again");
+  await h.getByRole("button", { name: "Mark Do not contact" }).click();
+  await expect(h.getByTestId("dnc")).toContainText("Please do not call me again");
+  await expect(h.getByRole("group", { name: "Contact" })).toHaveCount(0);
+  await h.goto("/dashboard/callbacks");
+  await expect(h.getByRole("listitem", { name: `Call-back: ${people.R3.name}` })).toHaveCount(0);
+});

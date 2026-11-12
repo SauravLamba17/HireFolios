@@ -31,10 +31,24 @@ export type VisitForPurge = { outcome: Outcome; purgeAfter: Date | null; photoPu
  * - every visit has a purge date and it has passed (an open, on-hold, selected or newer visit has none
  *   or a later one, which keeps the candidate).
  */
-export function candidateErasable(visits: VisitForPurge[], talentPool: boolean, now: Date): boolean {
-  if (visits.length === 0 || talentPool) return false;
+export function candidateErasable(visits: VisitForPurge[], talentPool: boolean, now: Date, poolExpired = false): boolean {
+  if (visits.length === 0) return false;
   if (visits.some((v) => v.outcome === "joined")) return false;
+  // Talent pool (Phase 3.6): kept for the keep period after the last visit / consent renewal, then erasable unless
+  // a visit is still open (in progress, on hold, selected). Tags never keep anyone.
+  if (talentPool) return poolExpired && visits.every((v) => !OPEN.includes(v.outcome));
   return visits.every((v) => v.purgeAfter !== null && v.purgeAfter.getTime() <= now.getTime());
+}
+const OPEN: Outcome[] = ["in_progress", "on_hold", "selected"];
+
+/** End of a talent-pool candidate's keep period: the later of their last visit day and last consent, plus the months. */
+export function poolKeptUntil(lastVisitDay: string | null, lastConsentAt: Date | null, months: number): Date | null {
+  const visit = lastVisitDay ? new Date(`${lastVisitDay}T00:00:00+05:30`) : null;
+  const from = [visit, lastConsentAt].filter((d): d is Date => d !== null).sort((a, b) => b.getTime() - a.getTime())[0];
+  if (!from) return null;
+  const d = new Date(from);
+  d.setUTCMonth(d.getUTCMonth() + months);
+  return d;
 }
 
 /** One visit's photo may be deleted when its photo date has passed (never for joined / talent pool). */

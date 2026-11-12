@@ -1,11 +1,14 @@
 // Writes of Phase 3.6 (HR-only data). Each runs inside act() (one transaction + live ping) and writes an audit row
 // with ids, codes and counts only. Every candidate id is checked against the staff member's tenant first.
 import "server-only";
-import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Tx } from "@/db";
-import { applications, candidates, candidateTags, optionItems, otherOffers, suggestionDismissals } from "@/db/schema";
+import { applications, callbacks, candidates, candidateTags, consents, contactLog, doNotContact, hiringPushes, optionItems, otherOffers, suggestionDismissals, tenants } from "@/db/schema";
 import { FlowError, NotFoundError } from "@/lib/flow";
+import { APP_UTC_OFFSET, todayIST } from "@/lib/ist";
+import { getActiveNotice } from "@/lib/notice-db";
 import { TAG } from "@/lib/rediscovery/categories";
+import { whatsappAllowed, type Channel, type ConsentChannel, type ContactOutcome, type Purpose } from "@/lib/rediscovery/contact";
 import { insights } from "@/lib/rediscovery/data";
 import type { Staff } from "@/lib/session";
 import { audit } from "@/lib/staff";
@@ -113,4 +116,162 @@ export async function dismissSuggestion(tx: Tx, staff: Staff, candidateId: strin
     dismissedBy: staff.id,
   });
   await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "suggestion.dismiss", entityType: "candidate", entityId: candidateId, meta: { tag: s.tag, applicationId: s.applicationId } });
+}
+
+// ---------- contact, do not contact, call-backs, consent (sub-phase D) ----------
+
+async function activeDnc(tx: Tx, staff: Staff, candidateId: string) {
+  const [d] = await tx
+    .select({ id: doNotContact.id })
+    .from(doNotContact)
+    .where(and(eq(doNotContact.tenantId, staff.tenantId), eq(doNotContact.candidateId, candidateId), isNull(doNotContact.clearedAt)));
+  return d ?? null;
+}
+
+async function latestConsent(tx: Tx, staff: Staff, candidateId: string) {
+  const [k] = await tx
+    .select()
+    .from(consents)
+    .where(and(eq(consents.tenantId, staff.tenantId), eq(consents.candidateId, candidateId)))
+    .orderBy(desc(consents.acceptedAt))
+    .limit(1);
+  return k ?? null;
+}
+
+export async function logContact(
+  tx: Tx,
+  staff: Staff,
+  candidateId: string,
+  input: { channel: Channel; purpose: Purpose; outcome: ContactOutcome | null; note: string | null; pushId?: string | null },
+) {
+  await lockCandidate(tx, staff, candidateId);
+  if (await activeDnc(tx, staff, candidateId)) throw new FlowError("This person asked not to be contacted.");
+  if (input.channel === "whatsapp" && !whatsappAllowed(await latestConsent(tx, staff, candidateId))) {
+    throw new FlowError("No WhatsApp consent from this person: call only.");
+  }
+  if (input.pushId) {
+    const [p] = await tx.select({ id: hiringPushes.id }).from(hiringPushes).where(and(eq(hiringPushes.id, input.pushId), eq(hiringPushes.tenantId, staff.tenantId)));
+    if (!p) throw new NotFoundError("Hiring push not found.");
+  }
+  const [row] = await tx
+    .insert(contactLog)
+    .values({ tenantId: staff.tenantId, candidateId, channel: input.channel, purpose: input.purpose, outcome: input.outcome, note: input.note, pushId: input.pushId ?? null, contactedBy: staff.id })
+    .returning({ id: contactLog.id });
+  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "contact.log", entityType: "candidate", entityId: candidateId, meta: { contactId: row.id, channel: input.channel, purpose: input.purpose, outcome: input.outcome } });
+}
+
+export async function setDoNotContact(tx: Tx, staff: Staff, candidateId: string, reason: string) {
+  await lockCandidate(tx, staff, candidateId);
+  if (await activeDnc(tx, staff, candidateId)) throw new FlowError("Already marked Do not contact.");
+  const [row] = await tx.insert(doNotContact).values({ tenantId: staff.tenantId, candidateId, reason, setBy: staff.id }).returning({ id: doNotContact.id });
+  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "contact.block", entityType: "candidate", entityId: candidateId, meta: { dncId: row.id } });
+}
+
+/** Admin only (permission contactUnblock, checked by the API), with a note. */
+export async function clearDoNotContact(tx: Tx, staff: Staff, candidateId: string, note: string) {
+  await lockCandidate(tx, staff, candidateId);
+  const d = await activeDnc(tx, staff, candidateId);
+  if (!d) throw new FlowError("This person is not marked Do not contact.");
+  await tx.update(doNotContact).set({ clearedAt: new Date(), clearedBy: staff.id, clearNote: note }).where(eq(doNotContact.id, d.id));
+  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "contact.unblock", entityType: "candidate", entityId: candidateId, meta: { dncId: d.id } });
+}
+
+export async function setCallback(tx: Tx, staff: Staff, candidateId: string, input: { dueOn: string; note: string | null }) {
+  await lockCandidate(tx, staff, candidateId);
+  const [last] = await tx
+    .select({ id: applications.id })
+    .from(applications)
+    .where(and(eq(applications.tenantId, staff.tenantId), eq(applications.candidateId, candidateId), isNotNull(applications.decidedAt)))
+    .orderBy(desc(applications.decidedAt))
+    .limit(1);
+  const [onHold] = await tx
+    .select({ id: applications.id })
+    .from(applications)
+    .where(and(eq(applications.tenantId, staff.tenantId), eq(applications.candidateId, candidateId), eq(applications.outcome, "on_hold")))
+    .limit(1);
+  if (!last && !onHold) throw new FlowError("Call-backs can be set once the candidate has a decision.");
+  if (await activeDnc(tx, staff, candidateId)) throw new FlowError("This person asked not to be contacted.");
+  // one open call-back per person: setting a new date replaces the open one
+  const [open] = await tx
+    .select({ id: callbacks.id })
+    .from(callbacks)
+    .where(and(eq(callbacks.tenantId, staff.tenantId), eq(callbacks.candidateId, candidateId), eq(callbacks.status, "open")));
+  let id: string;
+  if (open) {
+    await tx.update(callbacks).set({ dueOn: input.dueOn, note: input.note }).where(eq(callbacks.id, open.id));
+    id = open.id;
+  } else {
+    [{ id }] = await tx
+      .insert(callbacks)
+      .values({ tenantId: staff.tenantId, candidateId, applicationId: (onHold ?? last)!.id, dueOn: input.dueOn, note: input.note, createdBy: staff.id })
+      .returning({ id: callbacks.id });
+  }
+  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: open ? "callback.update" : "callback.set", entityType: "candidate", entityId: candidateId, meta: { callbackId: id } });
+}
+
+async function openCallback(tx: Tx, staff: Staff, candidateId: string, callbackId: string) {
+  const [cb] = await tx
+    .select()
+    .from(callbacks)
+    .where(and(eq(callbacks.id, callbackId), eq(callbacks.tenantId, staff.tenantId), eq(callbacks.candidateId, candidateId)))
+    .for("update");
+  if (!cb) throw new NotFoundError("Call-back not found.");
+  if (cb.status !== "open") throw new FlowError("This call-back is already done.");
+  return cb;
+}
+
+export async function snoozeCallback(tx: Tx, staff: Staff, candidateId: string, input: { callbackId: string; dueOn: string; note: string | null }) {
+  const cb = await openCallback(tx, staff, candidateId, input.callbackId);
+  await tx.update(callbacks).set({ dueOn: input.dueOn, note: input.note ?? cb.note }).where(eq(callbacks.id, cb.id));
+  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "callback.snooze", entityType: "candidate", entityId: candidateId, meta: { callbackId: cb.id } });
+}
+
+export async function doneCallback(tx: Tx, staff: Staff, candidateId: string, input: { callbackId: string; outcome: ContactOutcome; note: string | null }) {
+  const cb = await openCallback(tx, staff, candidateId, input.callbackId);
+  await tx.update(callbacks).set({ status: "done", outcome: input.outcome, doneBy: staff.id, doneAt: new Date(), note: input.note ?? cb.note }).where(eq(callbacks.id, cb.id));
+  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "callback.done", entityType: "candidate", entityId: candidateId, meta: { callbackId: cb.id, outcome: input.outcome } });
+}
+
+/** Not-hired, decided visits of a candidate (the ones retention dates apply to). */
+const notHired = (staff: Staff, candidateId: string) =>
+  and(eq(applications.tenantId, staff.tenantId), eq(applications.candidateId, candidateId), inArray(applications.outcome, ["rejected", "no_show", "withdrawn", "offer_declined"]), isNotNull(applications.decidedAt));
+
+/**
+ * Talent-pool consent given after the visit (or renewed): a new consent row with the notice in use. The person is in
+ * the pool from now on, so their not-hired visits lose their deletion dates (the keep period takes over).
+ */
+export async function recordConsent(tx: Tx, staff: Staff, candidateId: string, input: { day: string; channel: ConsentChannel; note: string | null; whatsapp: boolean }) {
+  await lockCandidate(tx, staff, candidateId);
+  const notice = await getActiveNotice(staff.tenantId);
+  const acceptedAt = input.day === todayIST() ? new Date() : new Date(`${input.day}T12:00:00${APP_UTC_OFFSET}`);
+  const [row] = await tx
+    .insert(consents)
+    .values({ tenantId: staff.tenantId, candidateId, noticeVersion: notice.version, noticeId: notice.id, language: "en", talentPool: true, whatsapp: input.whatsapp, acceptedAt, recordedBy: staff.id, channel: input.channel, note: input.note })
+    .returning({ id: consents.id });
+  const kept = await tx.update(applications).set({ purgeAfter: null, photoPurgeAfter: null }).where(notHired(staff, candidateId)).returning({ id: applications.id });
+  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "consent.record", entityType: "candidate", entityId: candidateId, meta: { consentId: row.id, channel: input.channel, whatsapp: input.whatsapp, visitsKept: kept.length } });
+}
+
+/**
+ * Withdrawal (one click, with its date): out of the pool, bulk lists and call-backs; normal retention restarts from
+ * the withdrawal date for every not-hired visit (data and photo periods of the tenant).
+ */
+export async function withdrawConsent(tx: Tx, staff: Staff, candidateId: string, input: { day: string }) {
+  await lockCandidate(tx, staff, candidateId);
+  const k = await latestConsent(tx, staff, candidateId);
+  if (!k || !k.talentPool || k.withdrawnAt) throw new FlowError("This person has no talent-pool consent to withdraw.");
+  const at = input.day === todayIST() ? new Date() : new Date(`${input.day}T12:00:00${APP_UTC_OFFSET}`);
+  await tx.update(consents).set({ withdrawnAt: at }).where(eq(consents.id, k.id));
+  const [t] = await tx.select({ data: tenants.dataRetentionDays, photo: tenants.photoRetentionDays }).from(tenants).where(eq(tenants.id, staff.tenantId));
+  const restarted = await tx
+    .update(applications)
+    .set({ purgeAfter: new Date(at.getTime() + t.data * 86_400_000), photoPurgeAfter: new Date(at.getTime() + t.photo * 86_400_000) })
+    .where(notHired(staff, candidateId))
+    .returning({ id: applications.id });
+  const closed = await tx
+    .update(callbacks)
+    .set({ status: "done", outcome: "consent_withdrawn", doneBy: staff.id, doneAt: new Date() })
+    .where(and(eq(callbacks.tenantId, staff.tenantId), eq(callbacks.candidateId, candidateId), eq(callbacks.status, "open")))
+    .returning({ id: callbacks.id });
+  await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "consent.withdraw", entityType: "candidate", entityId: candidateId, meta: { consentId: k.id, visitsRestarted: restarted.length, callbacksClosed: closed.length } });
 }

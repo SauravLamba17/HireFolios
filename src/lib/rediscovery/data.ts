@@ -10,6 +10,7 @@ import { CAT, isCategoryKind, TAG, type Category, type CategoryOption, type Reas
 import { getSettings } from "@/lib/rediscovery/settings-db";
 import { suggest, type Dismissal, type Suggestion } from "@/lib/rediscovery/suggest";
 import { scoreChange, type ScoreChange } from "@/lib/rediscovery/trend";
+import { poolKeptUntil } from "@/lib/retention";
 import { summarize, type CardInput, type CandidateSummary, type VisitInput } from "@/lib/rediscovery/summary";
 
 type Q = typeof db | Tx;
@@ -212,4 +213,76 @@ export async function doNotRehireOf(tenantId: string, candidateId: string) {
     .leftJoin(users, eq(users.id, candidateTags.addedBy))
     .where(and(eq(candidateTags.tenantId, tenantId), eq(candidateTags.candidateId, candidateId), eq(candidateTags.tagCode, TAG.doNotRehire), isNull(candidateTags.removedAt)));
   return r ?? null;
+}
+
+// ---------- contact state (sub-phase D) ----------
+
+export type ContactState = {
+  lastContact: { at: Date; by: string | null; channel: string; outcome: string | null } | null;
+  dnc: { reason: string; by: string | null; at: Date } | null;
+  consent: { talentPool: boolean; whatsapp: boolean; withdrawnAt: Date | null; acceptedAt: Date } | null;
+  callback: { id: string; dueOn: string; note: string | null } | null;
+  poolUntil: Date | null; // end of the talent-pool keep period, when in the pool
+};
+
+/** Last contact, Do not contact, latest consent, open call-back and pool keep date of these candidates (one tenant). */
+export async function contactStates(tenantId: string, candidateIds: string[]): Promise<Map<string, ContactState>> {
+  const out = new Map<string, ContactState>(candidateIds.map((id) => [id, { lastContact: null, dnc: null, consent: null, callback: null, poolUntil: null }]));
+  if (!candidateIds.length) return out;
+  const ids = sql.join(candidateIds.map((i) => sql`${i}::uuid`), sql`, `);
+  const settings = await getSettings(tenantId);
+  const rows = await db.execute<{
+    id: string;
+    c_at: string | null; c_by: string | null; c_channel: string | null; c_outcome: string | null;
+    d_reason: string | null; d_by: string | null; d_at: string | null;
+    k_pool: boolean | null; k_wa: boolean | null; k_withdrawn: string | null; k_at: string | null;
+    cb_id: string | null; cb_due: string | null; cb_note: string | null;
+    last_visit: string | null;
+  }>(sql`
+    select c.id,
+      lc.contacted_at as c_at, lc.by as c_by, lc.channel as c_channel, lc.outcome as c_outcome,
+      d.reason as d_reason, du.name as d_by, d.set_at as d_at,
+      k.talent_pool as k_pool, k.whatsapp as k_wa, k.withdrawn_at as k_withdrawn, k.accepted_at as k_at,
+      cb.id as cb_id, cb.due_on::text as cb_due, cb.note as cb_note,
+      (select max(a.token_date)::text from applications a where a.tenant_id = c.tenant_id and a.candidate_id = c.id) as last_visit
+    from candidates c
+    left join lateral (select l.contacted_at, u.name as by, l.channel, l.outcome from contact_log l left join users u on u.id = l.contacted_by
+                       where l.tenant_id = c.tenant_id and l.candidate_id = c.id order by l.contacted_at desc limit 1) lc on true
+    left join do_not_contact d on d.tenant_id = c.tenant_id and d.candidate_id = c.id and d.cleared_at is null
+    left join users du on du.id = d.set_by
+    left join lateral (select x.talent_pool, x.whatsapp, x.withdrawn_at, x.accepted_at from consents x
+                       where x.tenant_id = c.tenant_id and x.candidate_id = c.id order by x.accepted_at desc limit 1) k on true
+    left join lateral (select b.id, b.due_on, b.note from callbacks b where b.tenant_id = c.tenant_id and b.candidate_id = c.id and b.status = 'open'
+                       order by b.due_on limit 1) cb on true
+    where c.tenant_id = ${tenantId} and c.id in (${ids})`);
+  const d = (v: string | null) => (v === null ? null : new Date(v));
+  for (const r of rows) {
+    const consent = r.k_at ? { talentPool: Boolean(r.k_pool), whatsapp: Boolean(r.k_wa), withdrawnAt: d(r.k_withdrawn), acceptedAt: new Date(r.k_at) } : null;
+    const inPool = Boolean(consent?.talentPool && !consent.withdrawnAt);
+    out.set(r.id, {
+      lastContact: r.c_at ? { at: new Date(r.c_at), by: r.c_by, channel: r.c_channel!, outcome: r.c_outcome } : null,
+      dnc: r.d_at ? { reason: r.d_reason!, by: r.d_by, at: new Date(r.d_at) } : null,
+      consent,
+      callback: r.cb_id ? { id: r.cb_id, dueOn: r.cb_due!, note: r.cb_note } : null,
+      poolUntil: inPool ? poolKeptUntil(r.last_visit, consent!.acceptedAt, settings.talent_pool_keep_months) : null,
+    });
+  }
+  return out;
+}
+
+/** Dry run for Settings: talent-pool candidates whose keep period ends within `days` (the deletion job then removes them). */
+export async function poolExpiring(tenantId: string, days: number) {
+  const months = (await getSettings(tenantId)).talent_pool_keep_months;
+  return [
+    ...(await db.execute<{ id: string; full_name: string; until: string }>(sql`
+      select c.id, c.full_name, p.until
+      from candidates c
+      join lateral (select k.talent_pool, k.withdrawn_at, k.accepted_at from consents k where k.candidate_id = c.id order by k.accepted_at desc limit 1) lk on true
+      cross join lateral (select greatest((select max(a.token_date) from applications a where a.candidate_id = c.id)::timestamp at time zone 'Asia/Kolkata', lk.accepted_at)
+                                 + make_interval(months => ${months}) as until) p
+      where c.tenant_id = ${tenantId} and lk.talent_pool and lk.withdrawn_at is null
+        and not exists (select 1 from applications j where j.candidate_id = c.id and j.outcome in ('joined', 'in_progress', 'on_hold', 'selected'))
+        and p.until <= now() + make_interval(days => ${days})
+      order by p.until`)),
+  ].map((r) => ({ id: r.id, name: r.full_name, until: new Date(r.until) }));
 }

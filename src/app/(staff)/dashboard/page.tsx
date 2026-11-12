@@ -12,6 +12,7 @@ import { formatLpa } from "@/lib/money";
 import { getOptionLists } from "@/lib/lists-db";
 import { experienceLabel, OUTCOME_LABELS } from "@/lib/options";
 import { can, ROLE_LABELS, requireStaff } from "@/lib/session";
+import { callbacksDueCount } from "@/lib/rediscovery/callbacks";
 
 export const metadata: Metadata = { title: "Candidates" };
 
@@ -44,10 +45,11 @@ export default async function DashboardPage({ searchParams }: Props) {
   }
 
   const f = parseFilters(await searchParams);
-  const [{ rows, total }, jobList, lists] = await Promise.all([
+  const [{ rows, total }, jobList, lists, dueCallbacks] = await Promise.all([
     searchCandidates(f, staff.tenantId),
     db.select({ id: jobs.id, title: jobs.title }).from(jobs).where(eq(jobs.tenantId, staff.tenantId)).orderBy(asc(jobs.title)),
     getOptionLists(staff.tenantId),
+    can(staff.role, "rediscovery") ? callbacksDueCount(staff.tenantId) : Promise.resolve(0),
   ]);
   // Retired list items stay in the filters (older candidates have them), after the current ones.
   const filterOptions = (items: typeof lists.certification) =>
@@ -59,6 +61,12 @@ export default async function DashboardPage({ searchParams }: Props) {
 
   return (
     <div className="space-y-6">
+      {dueCallbacks > 0 && (
+        <Link href="/dashboard/callbacks" className="card flex items-center justify-between gap-4 border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100" data-testid="callbacks-card">
+          <span className="text-lg font-semibold">Call-backs due: {dueCallbacks}</span>
+          <span className="underline">Open call-backs →</span>
+        </Link>
+      )}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Candidates</h1>

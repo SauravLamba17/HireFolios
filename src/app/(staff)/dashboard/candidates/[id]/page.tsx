@@ -4,7 +4,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { db, isUuid } from "@/db";
-import { applications, candidateFiles, candidates, consents, jobs, otherOffers, stages, users } from "@/db/schema";
+import { applications, candidateFiles, candidates, consents, contactLog, jobs, otherOffers, stages, users } from "@/db/schema";
+import { CallbackBox, ConsentBox, ContactPanel, DncBox } from "@/components/contact";
+import { getCompany } from "@/lib/company";
+import { callbackReason, CHANNELS, CONTACT_OUTCOMES, coolingWarning, defaultCallbackDay, PURPOSES, renderTemplates, whatsappAllowed } from "@/lib/rediscovery/contact";
+import { getSettings } from "@/lib/rediscovery/settings-db";
 import { StatusBadge, Tag } from "@/components/status-badge";
 import { formatDateIST, formatDateTimeIST, formatDayIST, todayIST } from "@/lib/ist";
 import { formatLpa, rupeesToLpa } from "@/lib/money";
@@ -14,7 +18,7 @@ import { NOTICE_LANGUAGES } from "@/lib/notice";
 import { canViewCandidate } from "@/lib/access";
 import { DECISION_LABELS, experienceLabel, OFFER_STATUS_LABELS } from "@/lib/options";
 import { can, requireStaff } from "@/lib/session";
-import { categoryMap, categoryOf, categoryOptions, insights, reasonOptions } from "@/lib/rediscovery/data";
+import { categoryMap, categoryOf, categoryOptions, contactStates, insights, reasonOptions } from "@/lib/rediscovery/data";
 import { ageOn } from "@/lib/intake";
 import { keepText } from "@/lib/retention";
 import { SummaryCard } from "./summary-card";
@@ -134,6 +138,23 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
   ]);
   const cats = categoryMap(lists);
   const insight = (await insights(tenantId, [id])).get(id)!;
+  const hrOnlyView = can(staff.role, "rediscovery");
+  const [contact, settings, company, contacts] = hrOnlyView
+    ? await Promise.all([
+        contactStates(tenantId, [id]).then((m) => m.get(id)!),
+        getSettings(tenantId),
+        getCompany(tenantId),
+        db
+          .select({ id: contactLog.id, at: contactLog.contactedAt, channel: contactLog.channel, purpose: contactLog.purpose, outcome: contactLog.outcome, note: contactLog.note, by: users.name })
+          .from(contactLog)
+          .leftJoin(users, eq(users.id, contactLog.contactedBy))
+          .where(and(eq(contactLog.tenantId, tenantId), eq(contactLog.candidateId, id)))
+          .orderBy(desc(contactLog.contactedAt)),
+      ])
+    : [null, null, null, []];
+  const today = todayIST();
+  const lastDecided = insight.lastDecided;
+  const cooling = contact && settings ? coolingWarning(contact.lastContact, settings.contact_cooling_days) : null;
   const canOverride = can(staff.role, "override");
   const canResume = can(staff.role, "resume");
   const canOffer = can(staff.role, "offer");
@@ -183,17 +204,82 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
       <SummaryCard
         person={{ id: c.id, fullName: c.fullName, age: c.dateOfBirth ? ageOn(c.dateOfBirth, todayIST()) : null, city: c.city, qualification: c.qualification, certifications: c.certifications, ehrSoftware: c.ehrSoftware, experienceMonths: c.experienceMonths, languages: c.languages }}
         insight={insight}
-        keep={keepText(visits, { inPool: Boolean(inPool), until: null }, formatDateIST)}
+        keep={keepText(visits, { inPool: Boolean(inPool), until: contact?.poolUntil ?? null }, formatDateIST)}
         hr={
           hrOnly
             ? {
                 otherOffer: offersElsewhere[0] ?? null,
                 tagOptions: lists.rediscovery_tag.filter((t) => t.active && t.code).map((t) => ({ code: t.code!, label: t.label })),
-                facts: [],
+                facts: [
+                  ...(contact?.dnc ? [{ label: "Contact", value: "Do not contact (they asked)", tone: "warn" as const }] : []),
+                  { label: "Call-back", value: contact?.callback ? `${contact.callback.dueOn <= today ? "Due" : "On"} ${formatDayIST(contact.callback.dueOn)}` : "None set", tone: contact?.callback && contact.callback.dueOn <= today ? ("warn" as const) : undefined },
+                  {
+                    label: "Last contacted",
+                    value: contact?.lastContact
+                      ? `${formatDateIST(contact.lastContact.at)} · ${CHANNELS[contact.lastContact.channel as keyof typeof CHANNELS] ?? contact.lastContact.channel} · ${contact.lastContact.by ?? "—"}${contact.lastContact.outcome ? ` · ${CONTACT_OUTCOMES[contact.lastContact.outcome as keyof typeof CONTACT_OUTCOMES]}` : ""}`
+                      : "Never",
+                  },
+                  { label: "Talent-pool consent", value: inPool ? "Yes" : latestConsent?.withdrawnAt ? `Withdrawn ${formatDateIST(latestConsent.withdrawnAt)}` : "No" },
+                ],
               }
             : null
         }
       />
+
+      {hrOnlyView && contact && settings && company && (
+        <section className="card space-y-5" aria-labelledby="ct-h">
+          <h2 id="ct-h" className="text-lg font-semibold">Contact and call-backs <span className="text-sm font-normal text-slate-500">(HR only)</span></h2>
+          <DncBox candidateId={c.id} dnc={contact.dnc ? { reason: contact.dnc.reason, by: contact.dnc.by, at: formatDateIST(contact.dnc.at) } : null} canClear={can(staff.role, "contactUnblock")} />
+          {!contact.dnc && (
+            <>
+              <ContactPanel
+                candidateId={c.id}
+                mobile={c.mobile}
+                cooling={cooling?.text ?? null}
+                waAllowed={whatsappAllowed(contact.consent)}
+                defaultPurpose={contact.callback ? "callback" : "other"}
+                templates={renderTemplates(settings, { name: c.fullName, company: company.shortName, position: visits[0]?.job ?? "", hr_name: staff.name }, contact.callback ? "callback" : "consent")}
+              />
+              {lastDecided || visits.some((v) => v.outcome === "on_hold") ? (
+                <CallbackBox
+                  candidateId={c.id}
+                  today={today}
+                  callback={contact.callback ? { ...contact.callback, dueText: formatDayIST(contact.callback.dueOn) } : null}
+                  defaultDay={defaultCallbackDay(lastDecided?.decidedAt ? todayIST(lastDecided.decidedAt) : today, c.noticeDays, settings.callback_default_days)}
+                  reason={callbackReason(visits[0]?.outcome ?? "", lastDecided?.category?.code ?? null, lastDecided?.category?.label ?? null)}
+                />
+              ) : (
+                <p className="text-sm text-slate-600">Call-backs can be set once the candidate has a decision.</p>
+              )}
+            </>
+          )}
+          <ConsentBox
+            candidateId={c.id}
+            inPool={Boolean(inPool)}
+            poolUntilText={contact.poolUntil ? formatDateIST(contact.poolUntil) : null}
+            withdrawnText={latestConsent?.withdrawnAt ? formatDateIST(latestConsent.withdrawnAt) : null}
+            today={today}
+          />
+          <div>
+            <h3 className="font-semibold">Contact log ({contacts.length})</h3>
+            {contacts.length === 0 ? (
+              <p className="text-sm text-slate-600">No contact recorded.</p>
+            ) : (
+              <ol className="mt-2 space-y-1 border-l-2 border-slate-200 pl-4 text-sm" aria-label="Contact log">
+                {contacts.map((x) => (
+                  <li key={x.id}>
+                    <span className="text-slate-500">{formatDateTimeIST(x.at)}</span> · {CHANNELS[x.channel as keyof typeof CHANNELS] ?? x.channel} ·{" "}
+                    {PURPOSES[x.purpose as keyof typeof PURPOSES] ?? x.purpose}
+                    {x.outcome && <> · {CONTACT_OUTCOMES[x.outcome as keyof typeof CONTACT_OUTCOMES] ?? x.outcome}</>}
+                    {x.note && <span className="text-slate-600"> · {x.note}</span>}
+                    <span className="text-slate-500"> · by {x.by ?? "—"}</span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        </section>
+      )}
 
       <section className="card space-y-4" aria-labelledby="det-h">
         <h2 id="det-h" className="text-lg font-semibold">Details</h2>

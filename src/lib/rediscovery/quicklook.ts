@@ -5,7 +5,8 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { normalizeMobile } from "@/lib/intake";
 import { experienceLabel } from "@/lib/options";
-import { insights } from "@/lib/rediscovery/data";
+import { contactStates, insights } from "@/lib/rediscovery/data";
+import { todayIST } from "@/lib/ist";
 
 export const QUICKLOOK_LIMIT = 8;
 // word_similarity ≥ 0.4 lets one or two typos through (same as the candidate list).
@@ -59,7 +60,7 @@ export async function quickLook(tenantId: string, q: string): Promise<QuickLookR
   const ids = [...matches].map((m) => m.id);
   if (!ids.length) return [];
   const idList = sql.join(ids.map((i) => sql`${i}::uuid`), sql`, `);
-  const [extra, photos, info] = await Promise.all([
+  const [extra, photos, info, states] = await Promise.all([
     db.execute<{ candidate_id: string; job: string; day: string; n: number }>(sql`
       select distinct on (a.candidate_id) a.candidate_id, j.title as job, a.token_date::text as day, count(*) over (partition by a.candidate_id)::int as n
       from applications a join jobs j on j.id = a.job_id
@@ -70,7 +71,9 @@ export async function quickLook(tenantId: string, q: string): Promise<QuickLookR
       where f.tenant_id = ${tenantId} and f.candidate_id in (${idList}) and f.kind = 'photo' and f.deleted_at is null
       order by f.candidate_id, f.created_at desc`),
     insights(tenantId, ids),
+    contactStates(tenantId, ids),
   ]);
+  const today = todayIST();
   const last = new Map([...extra].map((e) => [e.candidate_id, e]));
   const photo = new Map([...photos].map((p) => [p.candidate_id, p.id]));
   return [...matches].map((m) => {
@@ -89,7 +92,10 @@ export async function quickLook(tenantId: string, q: string): Promise<QuickLookR
       line: s.latest?.line ?? "No visits",
       change: s.change?.text ?? null,
       tags: s.tags.map((t) => ({ code: t.code, label: t.label })),
-      callbackDue: null,
+      callbackDue: (() => {
+        const st = states.get(m.id);
+        return st?.callback && !st.dnc && st.callback.dueOn <= today ? st.callback.dueOn : null;
+      })(),
     };
   });
 }

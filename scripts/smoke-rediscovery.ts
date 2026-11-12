@@ -2,6 +2,9 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import * as s from "@/db/schema";
+import { todayIST } from "@/lib/ist";
+import { addDays } from "@/lib/rediscovery/contact";
+import { planPurge } from "@/lib/purge";
 
 type Call = (p: string, init?: RequestInit) => Promise<Response>;
 export type Ctx = {
@@ -142,5 +145,62 @@ export async function rediscoverySmoke(c: Ctx) {
   q = await ql(hrB, cc.mobile.slice(-4));
   check("3.6 quick-look never shows another tenant's candidates", q.status === 200 && !q.rows.some((x) => x.id === costCandidate), q.rows.length);
   check("3.6 quick-look: interviewer 403, lobby TV 403", (await iv("/api/quicklook?q=Smoke")).status === 403 && (await as("tv")("/api/quicklook?q=Smoke")).status === 403);
+
+  // ---------- D: contact log, cooling, call-backs, do not contact, consent ----------
+  const today = todayIST();
+  r = await red(costCandidate, { action: "contact", channel: "whatsapp", purpose: "other", outcome: null, note: null });
+  check("3.6 WhatsApp without WhatsApp consent → 400 (call only)", r.status === 400, r.status);
+  r = await red(costCandidate, { action: "contact", channel: "call", purpose: "callback", outcome: "no_answer", note: "rang twice" });
+  check("3.6 call logged", r.status === 200 && (await db.$count(s.contactLog, eq(s.contactLog.candidateId, costCandidate))) === 1, r.status);
+  page = await text(await hr(`/dashboard/candidates/${costCandidate}`));
+  check("3.6 profile shows the cooling warning and Call only", page.includes("Contacted today by Smoke HR — contact again?") && page.includes("Call only (no WhatsApp consent)"));
+  r = await red(costCandidate, { action: "callbackSet", dueOn: addDays(today, -1), note: null });
+  check("3.6 call-back in the past → 400", r.status === 400, r.status);
+  r = await red(costCandidate, { action: "callbackSet", dueOn: today, note: "after notice" });
+  const [cb] = await db.select().from(s.callbacks).where(eq(s.callbacks.candidateId, costCandidate));
+  check("3.6 call-back set (today)", r.status === 200 && cb?.dueOn === today && cb.status === "open", r.status);
+  page = await text(await hr("/dashboard/callbacks"));
+  check("3.6 call-backs page lists it as due", page.includes("Due now (1)") && page.includes(costCandidate));
+  check("3.6 dashboard card shows call-backs due", (await text(await hr("/dashboard"))).includes("Call-backs due: 1"));
+  q = await ql(hr, cc.mobile.slice(-4));
+  check("3.6 quick-look shows Due for call-back", q.rows.some((x) => x.id === costCandidate && (x as { callbackDue?: string }).callbackDue === today), q.rows[0]);
+  r = await red(costCandidate, { action: "callbackSnooze", callbackId: cb.id, dueOn: addDays(today, 3), note: null });
+  check("3.6 snooze moves it out of today's list", r.status === 200 && (await text(await hr("/dashboard/callbacks"))).includes("Due now (0)"), r.status);
+  r = await red(costCandidate, { action: "callbackDone", callbackId: cb.id, outcome: "interested", note: "comes Monday" });
+  const [cbDone] = await db.select().from(s.callbacks).where(eq(s.callbacks.id, cb.id));
+  check("3.6 call-back done with outcome", r.status === 200 && cbDone.status === "done" && cbDone.outcome === "interested", cbDone.status);
+  check("3.6 done twice → 400", (await red(costCandidate, { action: "callbackDone", callbackId: cb.id, outcome: "interested", note: null })).status === 400);
+
+  r = await red(costCandidate, { action: "callbackSet", dueOn: today, note: null });
+  r = await red(costCandidate, { action: "dncSet", reason: "Asked us not to call again" });
+  check("3.6 Do not contact set", r.status === 200, r.status);
+  check("3.6 Do not contact: contact refused", (await red(costCandidate, { action: "contact", channel: "call", purpose: "other", outcome: null, note: null })).status === 400);
+  check("3.6 Do not contact: call-back refused and hidden from the list", (await red(costCandidate, { action: "callbackSet", dueOn: today, note: null })).status === 400 && (await text(await hr("/dashboard/callbacks"))).includes("Due now (0)"));
+  page = await text(await hr(`/dashboard/candidates/${costCandidate}`));
+  check("3.6 profile: Do not contact shown, no Call / WhatsApp buttons", page.includes("Asked us not to call again") && !page.includes(">Call<") && !page.includes("Call only"));
+  check("3.6 HR can't clear Do not contact → 403", (await red(costCandidate, { action: "dncClear", note: "they called us" })).status === 403);
+  r = await adm(`/api/candidates/${costCandidate}/rediscovery`, json({ action: "dncClear", note: "They called us back and asked for jobs" }));
+  check("3.6 admin clears Do not contact with a note", r.status === 200, r.status);
+
+  // consent after the visit → kept past retention; withdrawal → normal dates from the withdrawal day
+  const rej = c.candidates.rejected;
+  const visitsBefore = await db.select().from(s.applications).where(eq(s.applications.candidateId, rej));
+  r = await red(rej, { action: "consentRecord", day: today, channel: "phone", note: "said yes on the phone", whatsapp: true });
+  const visitsKept = await db.select().from(s.applications).where(eq(s.applications.candidateId, rej));
+  check("3.6 consent recorded: not-hired visits lose their deletion dates", r.status === 200 && visitsBefore.some((v) => v.purgeAfter) && visitsKept.filter((v) => v.outcome === "rejected").every((v) => v.purgeAfter === null), r.status);
+  const later = (days: number) => planPurge(new Date(Date.now() + days * 864e5), c.tenantA).then((p) => p[0]?.candidates ?? []);
+  check("3.6 kept past retention (dry run in 400 days: not deleted)", !(await later(400)).includes(rej));
+  check("3.6 deleted after the 24-month keep period (dry run in 25 months)", (await later(25 * 31)).includes(rej) || visitsKept.some((v) => ["in_progress", "on_hold", "selected"].includes(v.outcome)));
+  r = await red(rej, { action: "consentWithdraw", day: today });
+  const after = await db.select().from(s.applications).where(eq(s.applications.candidateId, rej));
+  const days = (d: Date | null) => (d ? Math.round((d.getTime() - Date.now()) / 864e5) : null);
+  check("3.6 withdrawal restarts the deletion dates from today (365 / 180 days)", r.status === 200 && after.filter((v) => v.outcome === "rejected").every((v) => days(v.purgeAfter) === 365 && days(v.photoPurgeAfter) === 180), after.map((v) => days(v.purgeAfter)));
+  check("3.6 withdrawing twice → 400", (await red(rej, { action: "consentWithdraw", day: today })).status === 400);
+  const audits3 = await db.select().from(s.auditLog).where(eq(s.auditLog.tenantId, c.tenantA));
+  check(
+    "3.6 contact / call-back / consent / do-not-contact audited with codes only",
+    ["contact.log", "callback.set", "callback.snooze", "callback.done", "contact.block", "contact.unblock", "consent.record", "consent.withdraw"].every((a) => audits3.some((x) => x.action === a)) &&
+      audits3.every((a) => !c.pii.some((p) => JSON.stringify(a.meta ?? {}).includes(p)) && !/rang|Monday|phone/.test(JSON.stringify(a.meta ?? {}).replace('"phone"', ""))),
+  );
   return { costCandidate };
 }
