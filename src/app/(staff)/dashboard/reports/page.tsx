@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { formatDateTimeIST, formatDayIST, todayIST } from "@/lib/ist";
 import { barWidths, fillDays, minutesLabel, parseRange, rate } from "@/lib/reports";
 import { can, requireStaff } from "@/lib/session";
+import { RediscoveryReports } from "./rediscovery-reports";
 
 export const metadata: Metadata = { title: "Reports" };
 
@@ -238,6 +239,7 @@ export default async function ReportsPage({ searchParams }: Props) {
           </section>
         </>
       )}
+      {can(staff.role, "rediscovery") && <RediscoveryReports tenantId={t} from={from} to={to} />}
     </div>
   );
 }

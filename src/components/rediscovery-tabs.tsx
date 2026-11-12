@@ -10,6 +10,7 @@ export const REDISCOVERY_TABS = [
   { href: "/dashboard/pushes", label: "Pushes" },
   { href: "/dashboard/suggestions", label: "Suggestions" },
   { href: "/dashboard/callbacks", label: "Call-backs" },
+  { href: "/dashboard/joining", label: "Joining soon" },
 ];
 
 export function RediscoveryTabs() {

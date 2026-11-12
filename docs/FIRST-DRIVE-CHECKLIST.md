@@ -16,6 +16,12 @@ For the admin and HR lead at Simplen. Tick each line.
 - [ ] **Settings → Company:** company name, short name, token prefix, office address and logo checked and saved.
 - [ ] **Settings → Lists:** certifications, coding specialties, EHR / PM software, education, notice periods, sources
       and languages checked with HR (rename, add, retire); the "Sample" marks are gone.
+- [ ] **Settings → Lists → Reject categories and Rediscovery tags:** categories (and whether each is a skill reason or
+      not) and tags checked with HR; **Jobs, rounds & retention → Reject reasons:** each reason has the right category.
+- [ ] **Settings → Rediscovery:** strong score (3.5), cooling period (30 days), talent-pool keep period (24 months),
+      call-back default, joining-risk thresholds, office city, bulk list look-back and over-budget limit, ranking weights
+      and the six WhatsApp messages (English + Hindi, Hindi checked by a native speaker) confirmed and saved; the "Sample"
+      marks are gone. See docs/HR-GUIDE-REDISCOVERY.md.
 - [ ] **Settings → Privacy notice:** English and Hindi text checked by legal and a Hindi speaker, contact person for data
       requests and complaints named, then published as a new version (the starting draft is no longer "In use").
 - [ ] **Staff:** accounts for HR, every interviewer and manager, and one **display** account for the lobby TV.
@@ -56,11 +62,15 @@ For the admin and HR lead at Simplen. Tick each line.
 - [ ] **Drive → End of day**, check the summary.
 - [ ] **Export day (Excel)** if management wants the day's list.
 - [ ] Selected candidates: record the offer on their profile (offered / accepted / declined, salary, joining date).
+- [ ] Rejected for cost: the expected CTC and our budget are filled in on the reject form (optional, but the cost reports and
+      bulk lists depend on it). Other offers the candidate mentioned: profile → Other offers in hand.
 - [ ] Leave the server PC on for the 6:15 pm backup (if it was off, the backup runs when it is switched on again).
 
 ## After the first week
 
 - [ ] **Reports:** walk-ins, pass rates by round, sources, reject reasons look right.
 - [ ] Joined candidates marked as joined on their profile.
+- [ ] **Rediscovery → Suggestions:** reviewed (accept or dismiss); **Call-backs:** due ones done or snoozed; **Joining soon:**
+      hints checked with the candidates.
 - [ ] **Privacy:** any requests from candidates logged and answered before the due date (90 days).
 - [ ] Try a restore on a spare PC once (docs/INSTALL.md, steps 2-4 then 13), so you know it works before you need it.

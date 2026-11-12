@@ -13,7 +13,7 @@ const LINKS: { href: string; label: string; permission: Permission; also?: strin
   { href: "/dashboard/drive", label: "Drive", permission: "drive" },
   { href: "/interview", label: "Interview", permission: "interview" },
   // Phase 3.6: one entry for the rediscovery pages (they share a tab bar)
-  { href: "/dashboard/pool", label: "Rediscovery", permission: "rediscovery", also: ["/dashboard/pool", "/dashboard/bulk", "/dashboard/pushes", "/dashboard/suggestions", "/dashboard/callbacks"] },
+  { href: "/dashboard/pool", label: "Rediscovery", permission: "rediscovery", also: ["/dashboard/pool", "/dashboard/bulk", "/dashboard/pushes", "/dashboard/suggestions", "/dashboard/callbacks", "/dashboard/joining"] },
   { href: "/dashboard/reports", label: "Reports", permission: "reports" },
   { href: "/dashboard/privacy", label: "Privacy", permission: "privacy" },
   { href: "/dashboard/settings", label: "Settings", permission: "settings", also: "/dashboard/settings/" },

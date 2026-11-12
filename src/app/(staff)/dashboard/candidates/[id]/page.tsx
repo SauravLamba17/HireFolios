@@ -18,7 +18,7 @@ import { NOTICE_LANGUAGES } from "@/lib/notice";
 import { canViewCandidate } from "@/lib/access";
 import { DECISION_LABELS, experienceLabel, OFFER_STATUS_LABELS } from "@/lib/options";
 import { can, requireStaff } from "@/lib/session";
-import { categoryMap, categoryOf, categoryOptions, contactStates, insights, reasonOptions } from "@/lib/rediscovery/data";
+import { categoryMap, categoryOf, categoryOptions, contactStates, insights, reasonOptions, risksFor } from "@/lib/rediscovery/data";
 import { ageOn } from "@/lib/intake";
 import { keepText } from "@/lib/retention";
 import { SummaryCard } from "./summary-card";
@@ -154,6 +154,8 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
     : [null, null, null, []];
   const today = todayIST();
   const lastDecided = insight.lastDecided;
+  const selectedVisit = visits.find((v) => v.outcome === "selected");
+  const risk = hrOnlyView && selectedVisit ? ((await risksFor(tenantId, [selectedVisit.id])).get(selectedVisit.id) ?? []) : null;
   const cooling = contact && settings ? coolingWarning(contact.lastContact, settings.contact_cooling_days) : null;
   const canOverride = can(staff.role, "override");
   const canResume = can(staff.role, "resume");
@@ -219,6 +221,15 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
                       ? `${formatDateIST(contact.lastContact.at)} · ${CHANNELS[contact.lastContact.channel as keyof typeof CHANNELS] ?? contact.lastContact.channel} · ${contact.lastContact.by ?? "—"}${contact.lastContact.outcome ? ` · ${CONTACT_OUTCOMES[contact.lastContact.outcome as keyof typeof CONTACT_OUTCOMES]}` : ""}`
                       : "Never",
                   },
+                  ...(risk
+                    ? [
+                        {
+                          label: "Joining-risk hints",
+                          value: risk.length ? <ul data-testid="risk-hints">{risk.map((h) => <li key={h.code}>{h.text}</li>)}</ul> : <span data-testid="risk-hints">No risk hints</span>,
+                          tone: risk.length ? ("warn" as const) : undefined,
+                        },
+                      ]
+                    : []),
                   { label: "Talent-pool consent", value: inPool ? "Yes" : latestConsent?.withdrawnAt ? `Withdrawn ${formatDateIST(latestConsent.withdrawnAt)}` : "No" },
                 ],
               }

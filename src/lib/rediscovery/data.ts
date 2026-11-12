@@ -11,6 +11,8 @@ import { getSettings } from "@/lib/rediscovery/settings-db";
 import { suggest, type Dismissal, type Suggestion } from "@/lib/rediscovery/suggest";
 import { scoreChange, type ScoreChange } from "@/lib/rediscovery/trend";
 import { poolKeptUntil } from "@/lib/retention";
+import { todayIST } from "@/lib/ist";
+import { riskHints, type RiskHint } from "@/lib/rediscovery/risk";
 import { summarize, type CardInput, type CandidateSummary, type VisitInput } from "@/lib/rediscovery/summary";
 
 type Q = typeof db | Tx;
@@ -285,4 +287,39 @@ export async function poolExpiring(tenantId: string, days: number) {
         and p.until <= now() + make_interval(days => ${days})
       order by p.until`)),
   ].map((r) => ({ id: r.id, name: r.full_name, until: new Date(r.until) }));
+}
+
+// ---------- joining-risk hints (sub-phase F) ----------
+
+/** Hints for these visits (one tenant); only selected, not-yet-joined visits get any. */
+export async function risksFor(tenantId: string, applicationIds: string[], q: Q = db): Promise<Map<string, RiskHint[]>> {
+  const out = new Map<string, RiskHint[]>();
+  if (!applicationIds.length) return out;
+  const settings = await getSettings(tenantId, q === db ? undefined : q);
+  const rows = await q.execute<{ id: string; outcome: string; offered_ctc: number | null; joining_date: string | null; expected_ctc: number | null; notice_days: number | null; city: string | null; oo_company: string | null; oo_ctc: number | null; oo_noted: string | null }>(sql`
+    select a.id, a.outcome, a.offered_ctc, a.joining_date::text, c.expected_ctc, c.notice_days, c.city,
+           oo.company as oo_company, oo.offered_ctc as oo_ctc, oo.noted_on::text as oo_noted
+    from applications a join candidates c on c.id = a.candidate_id
+    left join lateral (select o.company, o.offered_ctc, o.noted_on from other_offers o where o.candidate_id = c.id order by o.noted_on desc, o.created_at desc limit 1) oo on true
+    where a.tenant_id = ${tenantId} and a.id in (${sql.join(applicationIds.map((i) => sql`${i}::uuid`), sql`, `)})`);
+  const today = todayIST();
+  for (const r of rows) {
+    out.set(
+      r.id,
+      riskHints(
+        {
+          outcome: r.outcome,
+          offeredCtc: r.offered_ctc,
+          expectedCtc: r.expected_ctc,
+          noticeDays: r.notice_days,
+          joiningDate: r.joining_date,
+          city: r.city,
+          otherOffer: r.oo_noted ? { company: r.oo_company, offeredCtc: r.oo_ctc, notedOn: r.oo_noted } : null,
+          today,
+        },
+        settings,
+      ),
+    );
+  }
+  return out;
 }

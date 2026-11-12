@@ -59,6 +59,12 @@ Read `PROGRESS.md` first and continue from where it stops.
 | `src/lib/privacy.ts` | Rights requests: log / update, erase (refuses joined people), access ZIP, correction |
 | `src/lib/exports.ts`, `src/app/api/exports/[kind]/` | CSV (formula-safe) and Excel exports: candidates (current filters), drive day, joined; each logged in `exports` |
 | `src/lib/reports.ts` | Report date range + chart helpers; `dashboard/reports` runs the queries (real rows, "as of" time) |
+| `docs/REDISCOVERY.md`, `docs/HR-GUIDE-REDISCOVERY.md` | Phase 3.6 spec (source of truth) and the HR guide |
+| `src/lib/rediscovery/` | Candidate 360 + rediscovery. Pure, unit-tested rules: `settings.ts` (seed values + limits of Settings → Rediscovery), `categories.ts` (reject categories, tags, cost gap), `summary.ts` (hiring summary), `suggest.ts`, `trend.ts` (score change), `contact.ts` (cooling, templates, wa.me / tel:, call-back dates), `rank.ts` (bulk ranking, push statuses), `risk.ts` (joining-risk hints). Server: `settings-db.ts`, `data.ts` (loads histories, tags, insights, contact state, risks), `actions.ts` (every write, audited), `pool.ts` (pool + bulk lists, set-based base query), `quicklook.ts`, `callbacks.ts` |
+| `src/app/(staff)/dashboard/{pool,bulk,pushes,suggestions,callbacks,joining}`, `settings/rediscovery` | Rediscovery pages (HR, manager, admin) and Settings → Rediscovery (admin) |
+| `src/app/api/candidates/[id]/rediscovery`, `.../summary`, `api/quicklook`, `api/pushes`, `api/settings/rediscovery` | Rediscovery APIs (one action route per candidate) |
+| `src/components/quick-look.tsx`, `rediscovery.tsx`, `contact.tsx`, `person-contact.tsx`, `reject-fields.tsx` | Header quick-look, tags / suggestions, contact / call-back / consent / do-not-contact controls, reject category + cost fields |
+| `scripts/perf-rediscovery.ts` | 10,000-candidate timing of quick-look, pool, bulk list (throwaway tenant, deleted after) |
 | `src/lib/audit-query.ts` | Audit viewer filters (`dashboard/audit`, CSV at `api/audit/export`) |
 | `src/lib/health.ts`, `src/app/api/health/` | Server status (DB, free disk, last backup, version), no auth, no personal data; admin status card |
 | `src/instrumentation.ts` → `src/instrumentation-node.ts` | Start-up (Node runtime only; keep `instrumentation.ts` import-free, it is also compiled for edge): migrations (`RUN_MIGRATIONS=1`), seed (`SEED_ON_START=1`), deletion job (unless `PURGE_JOB=off`) |
@@ -113,6 +119,12 @@ Read `PROGRESS.md` first and continue from where it stops.
   (`candidateErasable` in retention.ts). Unlink files only after the transaction commits.
 - Exports write an `exports` row and an `export.download` audit entry (kind + row count only).
 - Report figures come from real rows with an "as of" time; never sample numbers in the UI.
+- Rediscovery (Phase 3.6): rules use list item **codes** (`option_items.code`), never labels. Every automatic label is a
+  suggestion until a person accepts it, and shows its reason. HR-only data (tags, do not rehire / contact, contact log, call-backs,
+  cost figures, other offers, risk hints) needs the `rediscovery` permission and never reaches the consent screen, the TV or
+  interviewers (except the hiring summary of a candidate they interviewed). Tags never keep data; talent-pool consent does,
+  for `talent_pool_keep_months`. New Phase 3.6 tables cascade with their tenant and candidate.
+- Rediscovery writes go through `src/lib/rediscovery/actions.ts` inside `act()`; thresholds come from `getSettings(tenantId)`.
 
 ## Commands
 

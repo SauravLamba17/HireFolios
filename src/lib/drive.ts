@@ -8,7 +8,7 @@ import { applications, consents, drives, locations, panels, queueEvents, scoreca
 import { applyDecision, canMarkJoined, FlowError, NotFoundError, offerOutcome, outcomeDates, pickNext, queueOrder, queueStage, waitEstimate, type Decision, type OfferStatus, type Outcome, type StageInfo } from "@/lib/flow";
 import { todayIST } from "@/lib/ist";
 import { CAT } from "@/lib/rediscovery/categories";
-import { isActiveCategory, reasonCategory } from "@/lib/rediscovery/data";
+import { isActiveCategory, reasonCategory, risksFor } from "@/lib/rediscovery/data";
 import { audit } from "@/lib/staff";
 import type { Staff } from "@/lib/session";
 
@@ -545,7 +545,7 @@ export async function recordOffer(
   tx: Tx,
   staff: Staff,
   applicationId: string,
-  input: { status: OfferStatus; offeredCtc: number | null; joiningDate: string | null; declineCategory?: string | null; costExpected?: number | null; riskHints?: string[] },
+  input: { status: OfferStatus; offeredCtc: number | null; joiningDate: string | null; declineCategory?: string | null; costExpected?: number | null },
 ) {
   const a = await lockApplication(tx, staff, applicationId);
   const next = offerOutcome(a.outcome as Outcome, input.status);
@@ -557,8 +557,13 @@ export async function recordOffer(
   } else if (next !== a.outcome) await setOutcome(tx, staff, a, next, a.currentStageId, null);
   await tx
     .update(applications)
-    .set({ offerStatus: input.status, offeredCtc: input.offeredCtc, joiningDate: input.joiningDate, ...(input.riskHints ? { riskHints: input.riskHints } : {}) })
+    .set({ offerStatus: input.status, offeredCtc: input.offeredCtc, joiningDate: input.joiningDate })
     .where(eq(applications.id, a.id));
+  // joining-risk hints as they stood when the offer was recorded (for the "hints vs outcome" report)
+  if (next === "selected") {
+    const hints = (await risksFor(staff.tenantId, [a.id], tx)).get(a.id) ?? [];
+    await tx.update(applications).set({ riskHints: hints.map((h) => h.code) }).where(eq(applications.id, a.id));
+  }
   await tx.insert(queueEvents).values({ tenantId: staff.tenantId, applicationId: a.id, stageId: a.currentStageId, event: "completed", actorUserId: staff.id, note: `Offer ${input.status}` });
   await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "application.offer", entityType: "application", entityId: a.id, meta: { status: input.status, outcome: next, category: next === "offer_declined" ? (input.declineCategory ?? null) : null } });
 }

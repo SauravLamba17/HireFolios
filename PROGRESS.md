@@ -389,7 +389,10 @@ Phase 3 (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is 
       `rank.ts` with weights from Settings, "why" per row, "already in push X"), hiring pushes (`/dashboard/pushes`, per-person
       status, progress, contact with purpose bulk push, Excel export), set-based base query (10k candidates: pool 99–229 ms,
       bulk 324 ms)
-- [ ] **F** — joining-risk hints, reports, demo data, docs, final regression
+- [x] **F** — joining-risk hints (`risk.ts`; profile, drive board Selected list, `/dashboard/joining`; codes saved with the offer),
+      Reports → Rediscovery (why not hired by category / position, cost gap, pool by tag, suggestions accepted vs dismissed,
+      call-backs, push funnel, hints vs outcome), demo seed (cost rejections, near-miss, returning candidate, call-backs due,
+      offer with hints, push), docs (`REDISCOVERY.md` final, `HR-GUIDE-REDISCOVERY.md`, CLAUDE.md, first-drive checklist)
 
 ## Phase 4 — next
 

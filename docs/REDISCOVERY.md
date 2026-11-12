@@ -279,3 +279,16 @@ contact log, other offers, consent recording. `contactUnblock` (admin): clear Do
 - Consent recorded then withdrawn: purge dates restart from the withdrawal date.
 - Candidate erased by retention or a rights request: tags, contact log, call-backs, other offers and push rows go too.
 - A second tenant never sees any of it (every query on `tenant_id`; ids of other tenants answer 404).
+
+## Implementation map (final, 2026-11-12)
+
+| Part | Where |
+|---|---|
+| Rules (pure, unit-tested) | `src/lib/rediscovery/{settings,categories,summary,suggest,trend,contact,rank,risk}.ts`; retention keep period in `src/lib/retention.ts` |
+| Data and writes | `src/lib/rediscovery/{settings-db,data,actions,pool,quicklook,callbacks}.ts`; categories / cost figures on decisions in `src/lib/drive.ts`; keep period in `src/lib/purge.ts` |
+| Screens | profile Summary card + Contact and call-backs (`dashboard/candidates/[id]`), `dashboard/{pool,bulk,pushes,suggestions,callbacks,joining}`, Settings → Rediscovery and Lists, reject fields on the interview / override / offer forms, intake "More details", header quick-look, drive board hints, Reports → Rediscovery |
+| APIs | `api/candidates/[id]/rediscovery` (all per-candidate actions), `api/candidates/[id]/summary`, `api/quicklook`, `api/pushes`, `api/pushes/[id]`, `api/settings/rediscovery`, `api/exports/{pool,bulk,push}` |
+| Tests | unit (`src/lib/rediscovery/*.test.ts`), `npm run smoke` (`scripts/smoke-rediscovery.ts`), `e2e/rediscovery.spec.ts`, `scripts/perf-rediscovery.ts` |
+
+Measured on 10,000 sample candidates (dev laptop, PostgreSQL 16): quick-look 34–108 ms, pool 99–229 ms, bulk list 324 ms.
+At this size PostgreSQL scans `candidates` faster than it would use the trigram indexes; they take over on larger tables.

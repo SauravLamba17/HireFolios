@@ -357,3 +357,49 @@ test("E: tagged cost rejection is in the pool and in a bulk list above the ask, 
   await h.goto("/dashboard/bulk?needed=10&budget=4.5&night=yes");
   await expect(list(h).getByRole("listitem", { name: new RegExp(people.P1.name) })).toContainText(`already in push AR callers ${run}`);
 });
+
+test("F: offer with another offer in hand + long notice → two risk hints (profile, joining soon, drive board); reports show real figures", async () => {
+  await person("S1", { name: `Sunil Selected ${run}`, outcome: "selected", stageName: "Offer", cards: [["HR screen", { Communication: 4, Knowledge: 4 }]], token: "R-80" });
+  await sql`update candidates set notice_days = 90 where id = ${people.S1.id}`;
+  const h = pages.hr;
+  await h.goto(`/dashboard/candidates/${people.S1.id}`);
+  await h.getByText("Add another offer").click();
+  const oo = h.getByRole("form", { name: "Add another offer" });
+  await oo.getByLabel("Company").fill("Acme RCM");
+  await oo.getByLabel("Offered CTC (LPA)").fill("4");
+  await oo.getByRole("button", { name: "Add other offer" }).click();
+  await expect(h.getByText("Other offer saved.")).toBeVisible();
+  const box = h.getByRole("region", { name: "Offer and joining" });
+  await box.getByLabel("Offer status").selectOption("accepted");
+  await box.getByLabel("Offered CTC (LPA)").fill("3.5");
+  await box.getByLabel("Joining date").fill(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(Date.now() + 10 * 864e5)));
+  await box.getByRole("button", { name: "Save offer" }).click();
+  await expect(box.getByText("Offer saved.")).toBeVisible();
+  const hints = h.getByTestId("summary-card").getByTestId("risk-hints");
+  await expect(hints.getByRole("listitem")).toHaveCount(2);
+  await expect(hints).toContainText("Other offer in hand: Acme RCM, 4 LPA");
+  await expect(hints).toContainText("Notice period 90 days (60 or more)");
+  await shoot(h, "profile-summary-risk-hints", { width: 1366, height: 768 });
+  const [a] = await sql`select risk_hints from applications where id = ${people.S1.appId}`;
+  expect(a.risk_hints).toEqual(["other_offer", "notice"]); // saved with the offer for the report
+
+  await h.goto("/dashboard/joining");
+  await expect(h.getByRole("listitem", { name: `Joining: ${people.S1.name}` }).getByTestId("risk-hints")).toContainText("Notice period 90 days");
+  await shoot(h, "joining-soon", { width: 1366, height: 768 });
+  await h.goto("/dashboard/drive"); // creates today's drive
+  await sql`update applications set drive_id = (select id from drives where tenant_id = ${tenantId} order by created_at desc limit 1) where id = ${people.S1.appId}`;
+  await h.reload();
+  await expect(h.getByTestId("drive-risk")).toContainText("Joining-risk hints: Other offer in hand");
+
+  // the person turns the offer down → the report pairs the hints with "dropped"
+  await sql`update applications set outcome = 'offer_declined', offer_status = 'declined' where id = ${people.S1.appId}`;
+  await h.goto("/dashboard/reports");
+  const rep = h.getByLabel("Rediscovery reports");
+  await expect(rep.getByRole("table", { name: "Why we didn't hire", exact: true })).toContainText("Cost / salary expectation");
+  await expect(rep.getByTestId("cost-gap")).toContainText("Cost decisions");
+  await expect(rep.getByTestId("push-funnel")).toContainText("booked 1");
+  await expect(rep.getByRole("table", { name: "Joining-risk hints vs outcome" }).getByRole("row", { name: /Other offer in hand/ })).toContainText("1");
+  await expect(rep.getByRole("table", { name: "Suggestions accepted vs dismissed" })).toContainText("Good but high cost");
+  await expect(rep.getByTestId("callbacks-report")).toContainText("done in the period: 1");
+  await shoot(h, "reports-rediscovery", { width: 1366, height: 768 });
+});

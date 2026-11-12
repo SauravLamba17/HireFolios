@@ -8,6 +8,7 @@ import { Elapsed } from "@/components/elapsed";
 import { LiveRefresh } from "@/components/live-refresh";
 import { StatusBadge } from "@/components/status-badge";
 import { boardState } from "@/lib/drive";
+import { risksFor } from "@/lib/rediscovery/data";
 import { formatDateTimeIST, formatDayIST } from "@/lib/ist";
 import { OUTCOME_LABELS } from "@/lib/options";
 import { can, ROLE_LABELS, requireStaff } from "@/lib/session";
@@ -40,6 +41,8 @@ export default async function DrivePage() {
   const waitingFor = (stageId: string) =>
     (b.waiting.find((w) => w.stage.id === stageId)?.cards ?? []).map((c) => ({ id: c.id, label: `${c.token} · ${c.full_name}` }));
   const counts = Object.fromEntries(DONE.map((o) => [o, b.done.filter((d) => d.outcome === o)]));
+  // joining-risk hints for today's selected people (HR-only, Phase 3.6)
+  const risks = can(staff.role, "rediscovery") ? await risksFor(staff.tenantId, b.done.filter((d) => d.outcome === "selected").map((d) => d.id)) : new Map();
   const waitingTotal = b.waiting.reduce((n, w) => n + w.cards.length, 0) + b.unqueued.length;
   const timing =
     b.finishedToday >= 3 && b.averageToday !== null
@@ -227,6 +230,11 @@ export default async function DrivePage() {
                     <Link href={`/dashboard/candidates/${d.candidate_id}`} className="text-blue-800 hover:underline">{d.full_name}</Link>
                     {d.reject_reason && <span className="text-slate-600"> · {d.reject_reason}</span>}
                     {d.decided_at && <span className="text-slate-500"> · {clock(d.decided_at)}</span>}
+                    {o === "selected" && risks.has(d.id) && (
+                      <span className="block pl-6 text-amber-900" data-testid="drive-risk">
+                        {risks.get(d.id)!.length ? `Joining-risk hints: ${risks.get(d.id)!.map((h: { text: string }) => h.text).join(" · ")}` : "No risk hints"}
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>
