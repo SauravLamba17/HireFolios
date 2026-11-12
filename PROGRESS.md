@@ -1,6 +1,8 @@
 # Progress
 
-Phase 3 is complete (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is listed at the end.
+Phase 3.5 is complete (2026-11-12): lists, privacy notice and company profile in the database with Settings screens,
+configuration checked at start-up, a permanent dev PostgreSQL 16, pinned versions and an office machine check.
+Phase 3 (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is listed at the end.
 
 ## Phase 0 — Setup + login ✅ (2026-11-10)
 
@@ -265,6 +267,100 @@ Phase 3 is complete (2026-11-11): native Windows install, no Docker for Simplen.
   aliases `server-only` to its empty module. New `npm run dev:check` starts `next dev`, signs in as the seed admin,
   loads 13 key pages and fails on build errors, 5xx, or the deletion job not starting exactly once (it fails on the
   old `instrumentation.ts`).
+
+## Phase 3.5 — No hard-coding, real dev database, office compatibility ✅ (2026-11-12)
+
+- [x] **Hard-coded audit** of `src/` (lists, labels, numbers, company names, ports, paths, URLs, time zones, limits): every
+      business value moved to the database, every machine value to `.env`; what stays in code is documented (enum labels,
+      SSE retry, JPEG size caps, the IST constant, the product name in `brand.ts`, the seed source `options.ts`)
+- [x] Migration `0005_lists_notice_company` (adds only; one data fix: the unused seeded token prefix `SB` → `A`, which
+      tokens always showed): `option_items`, `privacy_notices` (+ `consents.notice_id`), company columns on `tenants`
+- [x] **Lists in the database** per tenant (certifications, coding specialties, EHR / PM software, education, notice
+      periods, sources, languages): label, in use, order, "sample" mark; seeded from `options.ts` the first time a tenant
+      needs them. **Settings → Lists**: add, rename, reorder, retire (never delete); audited (ids + list only). Intake,
+      intake prefill, search filters (retired items still offered, marked), job required certifications and the profile /
+      interview notice labels all read the database; the server validates against the active items
+- [x] **Privacy notice versions** per tenant: EN + HI templates with `{company} {photoDays} {dataDays} {contact}`, effective
+      date, draft / active / retired, contact person (name + email / phone, required to publish). **Settings → Privacy
+      notice**: start a draft from the version in use, edit, preview EN / HI, publish (old version read-only), discard.
+      Intake shows the active version; consents keep `notice_version` and `notice_id`. The starting text is exactly the old
+      `draft-2026-11-10`, so earlier consents still name the text they were shown
+- [x] **Company profile**: name, short name, token prefix (tokens `<prefix>-001`), office address, time zone (stored; IST
+      only for now), logo (PNG / JPEG / WebP by bytes, 1 MB, never SVG; `GET /api/company/logo` for signed-in staff of
+      the tenant, TV included). **Settings → Company**. Shown in the header, on the lobby TV, in the notice and in Excel
+      exports (workbook company, print header, a "Company" sheet with the logo)
+- [x] **Configuration**: `src/lib/config.ts` zod-checks every machine value at start-up (DATABASE_URL, PORT, HOSTNAME,
+      UPLOAD_DIR, BACKUP_DIR, BACKUP_STATUS_FILE, BETTER_AUTH_URL / SECRET / TRUSTED_ORIGINS, STAFF_SESSION_HOURS,
+      DISPLAY_SESSION_DAYS, MAX_UPLOAD_MB, MAX_CV_FILES, MAX_CV_PAGES, PURGE_JOB, PURGE_INTERVAL_MINUTES, OFFICE_HOURS,
+      RUN_MIGRATIONS, MIGRATIONS_DIR, SEED_ON_START, APP_VERSION); a bad value stops the server naming the variable.
+      Documented in `.env.example` and docs/INSTALL.md section 17. The deletion job can wait outside office hours
+- [x] **Version pinning**: `deploy/windows/versions.json` (Node.js 24, PostgreSQL 16, Caddy 2.11.9, WinSW 2.12.0 with
+      SHA-256) read by install / update / check-machine (common.ps1), `npm run package`, the app's start-up check and a unit
+      test that keeps `package.json` engines in step. The app refuses another Node.js or PostgreSQL major with a plain
+      message; update.ps1 refuses a release whose pins do not match the PC
+- [x] **Demo data** only on request: `npm run demo:seed` (separate "demo" tenant, 12 "Sample candidate NN", demo admin
+      with DEMO_ADMIN_PASSWORD from .env), `npm run demo:clear`; refuses NODE_ENV=production; not in releases
+- [x] **Permanent dev database**: PostgreSQL 16.15 (winget, same package as the office) as service `postgresql-x64-16`,
+      automatic, localhost:5432, database + login `hirefolios_dev` (passwords only in .env), via `scripts/dev-postgres.ps1`;
+      `npm run db:check`
+- [x] **Office compatibility**: `deploy/windows/check-machine.ps1` (no admin, changes nothing; PASS / WARN / FAIL with the
+      fix; report file on the Desktop); "please use Chrome or Edge" banner for other browsers; `npm run lint:ps`
+      (PowerShell 5.1 parse, `"$name:"` traps, ASCII, PSScriptAnalyzer)
+- [x] Docs: INSTALL.md step 0 (check-machine), Settings to fill in before going live, settings-file reference;
+      first-drive checklist; CLAUDE.md (patterns, dev database, commands)
+
+### Verification (Phase 3.5, against the permanent local PostgreSQL 16.15)
+
+- `tsc`, `eslint` clean; vitest 161/161 (new: config errors per variable, office hours, pinned versions, browser rule,
+  retired / renamed list items, notice rendering and publish checks); `npm run db:check` 4/4; production build and
+  `npm run package` (2,251 files, no source / env files, 4 secrets checked); `npm run dev:check` 16 pages
+- `npm run smoke` 85/85; Playwright 27 passed, 1 skipped (plain-http LAN address) in Chrome 157, twice in a row, incl. the
+  new settings-data spec (admin renames a certification, adds an EHR, retires a source and a certification, moves an
+  item; intake, server validation, search filters, profile and prefill follow; publishes a Hindi notice fix with a contact;
+  old consent keeps its version; company name / short name / prefix `T` / logo in header, TV, token `T-001` and Excel; SVG
+  logo refused; another tenant's item hidden and its update → 404) and the browsers spec; Edge 157: 7 passed
+- Real server start-ups (11/11): missing variables, relative UPLOAD_DIR, non-postgres URL, bad session hours, wrong
+  password (reason shown, password never printed), PostgreSQL not running → each stops with a named reason; fresh empty
+  database → 6 migrations, 83 list items, starting notice, prefix A; PostgreSQL restarted, stopped (health 503, sign-in
+  page still loads) and started again while the app runs → it recovers by itself (scratch PostgreSQL 16 cluster, no admin)
+- `check-machine.ps1` on this laptop: 0 FAIL, 3 WARN (Public Wi-Fi, DHCP address, Wi-Fi instead of a cable); PSScriptAnalyzer
+  0 findings on 11 scripts (positional-parameter rule excluded for the report helper, reason in the settings file)
+- Screenshots of Settings → Lists, Privacy notice, Company and intake details at 1440, 1366x768, 1024 reviewed (outside the repo)
+
+### Issues found while testing (logged before fixing; re-tested)
+
+| # | Issue | Severity | Fix |
+|---|---|---|---|
+| 1 | A `.env` with no UPLOAD_DIR line at all passed the check (zod skips a missing key whose schema is optional-like) | major | plain required string; unit test |
+| 2 | Wrong DATABASE_URL password: start-up said "Failed query: select ..." (drizzle's wrapper), not why | major | message from the driver error |
+| 3 | PostgreSQL down: the reason was empty (refused on ::1 and 127.0.0.1 = AggregateError with no message) | minor | inner error / code used |
+| 4 | check-machine.ps1 did not parse: `"$pgMajor:"` read as a drive variable (the trap fixed before, repeated) | blocker | `${pgMajor}:`; new `npm run lint:ps` catches the pattern in every script |
+| 5 | Product / company name, domain and a path written in code messages (start-up error, config examples, two hints) | minor | `brand.name`, neutral examples, "your HR team" |
+| 6 | Settings → Lists: after renaming, the row remounted and the "Saved." message vanished | minor | rows keyed by id |
+| 7 | Notice editor preview stayed in English while editing Hindi | minor | preview follows the edit language |
+| 8 | Header wrapped to two rows at 1366 / 1024 with the new company block | minor | company name under the product name, logo beside |
+| 9 | After publishing a notice the confirmation disappeared with the editor | minor | "In use at intake: <version> since <date>" always shown |
+| 10 | Release secret scan checked 3 named .env keys (not DEV_PG_SUPERUSER_PASSWORD / DEMO_ADMIN_PASSWORD) | minor | every SECRET / PASSWORD / TOKEN / KEY value |
+| 11 | e2e cleanups did not remove the per-tenant lists / notice: FK error, 2 test tenants left in the dev database | minor (tests) | cleanups updated, leftovers removed |
+| 12 | check-machine printed "C::" | minor | wording |
+
+### Known issues / left open after Phase 3.5
+
+- **Simplen must confirm in Settings before going live:** Company (name, short name, token prefix, address, logo);
+  Lists (all seven, marked Sample); Privacy notice (legal check of EN / HI, native Hindi check, contact person, publish);
+  plus the jobs, rounds, reject reasons and retention periods from earlier phases.
+- Time zone is stored per tenant but the app runs on IST only (hard rule 7); per-tenant zones arrive with the SaaS phase.
+- Renaming a list item does not rewrite older candidates (they keep the wording they were saved with; search still finds
+  them by full text, and retired items stay in the filters).
+- Browser support was tested on Chrome 157, Edge 157 and Playwright's Chromium 158; an older Chrome / Edge major was not
+  available offline. The banner lets Chromium browsers ≥ 120 through and warns on Firefox / Safari / older.
+- The Node.js / PostgreSQL major guard was tested with unit tests (no second Node or PostgreSQL major on this laptop).
+- Restarting the permanent dev PostgreSQL *service* needs admin; the same restart / stop / start behaviour was tested on a
+  scratch PostgreSQL 16 cluster.
+- The headless fake webcam still fails to start now and then (once in the full suite here); the intake test then uses the
+  upload fallback or fails at the webcam picker; a re-run passes.
+- Still open from earlier phases: office-PC-only checks (reboot, LAN, real webcam), `npm audit` items in build tools,
+  staff emails unique across tenants, in-memory sign-in rate limit, `update-user` rename, in-process live-update bus.
 
 ## Phase 4 — next
 

@@ -4,6 +4,7 @@ For the admin and HR lead at Simplen. Tick each line.
 
 ## A week before
 
+- [ ] `check-machine.ps1` run on the server PC and the HR desk PC: no FAIL left; report sent to the developer.
 - [ ] Hirefolios installed on the server PC with `install.ps1` (docs/INSTALL.md, steps 2-4); server PC on a UPS.
 - [ ] Every PC that will use it finds the server (step 5) and trusts its certificate (step 6): https://simplen.hirefolios.in
       opens with a padlock and no warning.
@@ -12,7 +13,11 @@ For the admin and HR lead at Simplen. Tick each line.
 - [ ] **Settings → Stages and interview rounds:** the rounds in the right order; interview rounds marked; scorecard criteria per round.
 - [ ] **Settings → Reject reasons** and **Average interview time** set.
 - [ ] **Settings → How long data is kept:** cooling-off, photo and data periods agreed with management.
-- [ ] Privacy notice (English and Hindi) checked by legal and a Hindi speaker; developer bumps the notice version if text changes.
+- [ ] **Settings → Company:** company name, short name, token prefix, office address and logo checked and saved.
+- [ ] **Settings → Lists:** certifications, coding specialties, EHR / PM software, education, notice periods, sources
+      and languages checked with HR (rename, add, retire); the "Sample" marks are gone.
+- [ ] **Settings → Privacy notice:** English and Hindi text checked by legal and a Hindi speaker, contact person for data
+      requests and complaints named, then published as a new version (the starting draft is no longer "In use").
 - [ ] **Staff:** accounts for HR, every interviewer and manager, and one **display** account for the lobby TV.
       Everyone has signed in once and set their own password.
 - [ ] Backup has run at least once (Server status box shows the time) and the second copy is set up

@@ -18,7 +18,7 @@ Read `PROGRESS.md` first and continue from where it stops.
 4. **Consent before camera.** No photo or CV page may be captured until a `consents` row exists for that candidate.
 5. **No Aadhaar at intake.** Do not add an Aadhaar field, photo or OCR anywhere in intake.
 6. **Under-18 blocked.** Intake refuses candidates younger than 18 (age computed on the IST calendar date).
-7. **IST dates.** Dates shown to staff are Asia/Kolkata (`src/lib/ist.ts`). Calendar days (token day, drive day) are IST `date` columns.
+7. **IST dates.** Dates shown to staff are Asia/Kolkata (`APP_TIME_ZONE` in `src/lib/ist.ts`, the only place it is written). Calendar days (token day, drive day) are IST `date` columns.
 8. **Money.** Store whole rupees per year as integers (`current_ctc`, `expected_ctc`). Show as LPA (e.g. 350000 → "3.5 LPA").
 9. **Works offline on the office LAN.** No CDNs, no Google Fonts (system fonts only), no runtime calls to the internet.
 10. **Product name only from `src/lib/brand.ts`.** Never hardcode the product name, short name or domain anywhere else in code (docs are fine).
@@ -41,9 +41,14 @@ Read `PROGRESS.md` first and continue from where it stops.
 | `src/lib/session.ts` | `ROLES` permission map, `getStaff`, `requireStaff` (pages), `requireStaffApi` (APIs) |
 | `src/lib/origin.ts` | Origin the request was sent to (LAN IP, localhost); used for CSRF checks |
 | `src/lib/staff.ts` | `createStaff`, `setTemporaryPassword` (admin reset), `audit` |
-| `src/lib/options.ts` | Pick-lists (certifications, coding specialties, EHR, education, notice, sources, languages, reject reasons). Sample lists for HR to confirm |
+| `src/lib/options.ts` | **Seed source only**: the starting pick-lists, reject reasons, sample criteria; plus code labels for enum values (outcomes, decisions) |
+| `src/lib/lists.ts`, `src/lib/lists-db.ts` | Pick-lists per tenant in `option_items` (Settings → Lists): types (browser-safe) and DB access (`getOptionLists`, per-request cache; a tenant without items gets the defaults, marked sample). Intake / filters / jobs validate against them |
 | `src/lib/intake.ts` | Shared intake rules (client + server): `normalizeMobile`, age, zod `IntakeRequest` |
-| `src/lib/notice.ts` | Privacy notice (English/Hindi) + `NOTICE_VERSION`. Draft, to be checked by legal |
+| `src/lib/notice.ts`, `src/lib/notice-db.ts` | Privacy notice: starting text + placeholders `{company} {photoDays} {dataDays} {contact}` + renderer (browser-safe); versions per tenant in `privacy_notices` (one active, one draft, published never edited; consents keep `notice_version` + `notice_id`) |
+| `src/lib/company.ts` | Company profile (Settings → Company): name, short name, token prefix, address, time zone (IST only for now), logo under `UPLOAD_DIR` served by `GET /api/company/logo` |
+| `src/lib/config.ts` | Every machine-specific value from env, zod-checked at start-up (`config()`, `uploadLimits()`, `inOfficeHours`); a bad value stops the server naming the variable |
+| `src/lib/runtime-check.ts`, `deploy/windows/versions.json` | Pinned Node.js / PostgreSQL majors (+ Caddy, WinSW): the app refuses others; install / update / package / `engines` follow the same file |
+| `src/lib/browser.ts`, `src/components/browser-notice.tsx` | "Please use Chrome or Edge" banner for other browsers |
 | `src/lib/money.ts` | LPA ↔ whole rupees per year |
 | `src/lib/files.ts` | Candidate files under `UPLOAD_DIR` (absolute path), type sniffing |
 | `src/lib/candidate-search.ts` | Candidate list: URL filters, WHERE builder (tenant first), `search_text` for full-text |
@@ -65,6 +70,10 @@ Read `PROGRESS.md` first and continue from where it stops.
 | `src/app/(staff)/dashboard/` | Candidate list + search, `candidates/[id]` profile (offer / joined, corrections), `reports`, `privacy`, `audit`, `settings`, `users` |
 | `src/app/api/` | `intake`, `candidates/lookup`, `candidates/[id]`, `applications/[id]`, `files/[id]`, `exports/*`, `privacy/*`, `audit/export`, `health`, `settings/*`, `users/*` |
 | `scripts/smoke.ts` | `npm run smoke`: end-to-end API check against a running server, in throwaway tenants |
+| `scripts/dev-postgres.ps1`, `scripts/db-check.ts` | Dev PC: permanent PostgreSQL 16 service + dev database (admin, once); `npm run db:check` |
+| `scripts/demo-seed.ts` | `npm run demo:seed` / `demo:clear`: a separate "demo" tenant with sample candidates, on request only |
+| `scripts/lint-ps.ps1` | `npm run lint:ps`: parse every .ps1 as Windows PowerShell 5.1, `"$name:"` traps, ASCII only, PSScriptAnalyzer |
+| `deploy/windows/check-machine.ps1` | Office PC readiness check (no admin, changes nothing): PASS / WARN / FAIL + report file |
 | `e2e/` | Playwright tests (two fake webcams, desk sizes 1440 / 1366x768 / 1024); `manual-intake.spec.ts` = hard rule 13 |
 | `scripts/package.mjs` | `npm run package [-- --version X]`: `release/hirefolios-<version>/` + `.zip` (standalone app, static, migrations, bundled `node.exe`, `VERSION.txt` + `release.env`, scripts, pinned tools, docs; no source, no `.env`, scans for this PC's secrets) |
 | `deploy/windows/` | Office PC: `install.ps1`, `update.ps1` (auto rollback), `backup.ps1`, `restore.ps1`, `uninstall.ps1`, `trust-certificate.ps1` + `set-hosts.ps1` (each office PC), `common.ps1` (shared helpers, **pinned WinSW + Caddy versions and SHA-256**), Caddyfile templates (B: `tls internal`, A: Cloudflare DNS), WinSW service XML, `PSScriptAnalyzerSettings.psd1` |
@@ -86,7 +95,13 @@ Read `PROGRESS.md` first and continue from where it stops.
 - Intake validation lives once in `src/lib/intake.ts`; the wizard and `POST /api/intake` both use it.
 - Candidate writes must also write `search_text` (`searchTextFor` in `candidate-search.ts`).
 - Ids from URLs: check with `isUuid` (`src/db/index.ts`) and answer 404 for other tenants' ids.
-- Pick-list values are stored as their text; add options in `src/lib/options.ts`, never inline.
+- Pick-list values are stored on candidates as their text. The lists live per tenant in `option_items` (Settings → Lists);
+  read them with `getOptionLists(tenantId)`, validate with `makeIntakeDetails(lists)` / `makeJobInput(...)`. Items are never
+  deleted, only retired. `options.ts` only seeds new tenants. Never hard-code a business list, company name, port, path or URL.
+- The privacy notice shown at intake is `getActiveNotice(tenantId)`; edits go to the draft and publish as a new version
+  (`notice-db.ts`). Company name / logo / token prefix come from `getCompany(tenantId)`; the product name stays in `brand.ts`.
+- Machine-specific values: add them to `ConfigSchema` (`src/lib/config.ts`), `.env.example` and docs/INSTALL.md section 17; read
+  them with `config()`, never `process.env` directly (except `DATABASE_URL` in `src/db/index.ts`).
 - Stages, scorecard criteria and reject reasons live in the database (Settings), not in code; the seed only
   fills an empty tenant.
 - Every queue move goes through `src/lib/drive.ts` (writes `queue_events` + `audit_log`), via `act()` so live
@@ -102,9 +117,12 @@ Read `PROGRESS.md` first and continue from where it stops.
 ## Commands
 
 ```bash
-cp .env.example .env          # then fill BETTER_AUTH_SECRET and SEED_ADMIN_*
+cp .env.example .env          # then fill BETTER_AUTH_SECRET, UPLOAD_DIR and SEED_ADMIN_*
+# once, PowerShell as Administrator: permanent PostgreSQL 16 service (port 5432) + hirefolios_dev; writes DATABASE_URL to .env
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-postgres.ps1
 npm install
-npm run db:up                 # dev Postgres 16 in Docker (docker-compose.dev.yml), or any local PostgreSQL 16
+npm run db:check              # connects, PostgreSQL 16.x, migrations up to date, pg_trgm (dev DB = the service above;
+                              # embedded-postgres / scratch clusters only for throwaway test databases)
 npm run db:migrate
 npm run db:seed
 npm run dev                   # http://localhost:3000
@@ -115,6 +133,8 @@ npm run build && npm start    # standalone server (node .next/standalone/server.
 npm run test:e2e              # needs the DB seeded and a server; PW_CHANNEL=chrome, E2E_BASE_URL, optional E2E_LAN_URL
 npm run smoke                 # API smoke test against SMOKE_BASE_URL (default http://localhost:3000)
 npm run db:generate -- --name=<change>   # after editing schema.ts
+npm run demo:seed             # sample data in a separate demo tenant (needs DEMO_ADMIN_PASSWORD in .env); demo:clear removes it
+npm run lint:ps               # PowerShell scripts (run after editing deploy/windows or scripts/*.ps1)
 
 # Production (office PC, Windows, see docs/INSTALL.md)
 npm run package               # -> release/hirefolios-<version>/ and .zip (copy to the office PC)

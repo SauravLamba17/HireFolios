@@ -19,6 +19,26 @@ Nobody needs to start anything by hand.
 
 ---
 
+## 0. Check the PC first (before buying extras or installing)
+
+Your developer sends `check-machine.ps1` (it is also in the `scripts` folder of the Hirefolios zip). It needs
+no admin rights and changes nothing. On the PC that will be the server, open **PowerShell** (normal, not
+administrator) in the folder where the file is and run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\check-machine.ps1
+```
+
+It checks Windows, memory (8 GB or more), free disk (50 GB or more), SSD, time zone (India), sleep settings,
+network (Private, fixed address, cable), ports 80 / 443 / 3000 / 5432, PostgreSQL or Node.js already installed,
+antivirus, webcam, and the Chrome / Edge versions. Each line says **PASS**, **WARN** or **FAIL** with what to do.
+
+- **Fix every FAIL** before installing (step 2 covers most of them), then run the check again.
+- Read every **WARN**: most are advice (for example "use a cable"), not blockers.
+- It saves a report on the Desktop (`hirefolios-machine-check-<PC name>-<date>.txt`): **send that file to your developer.**
+
+Run it on the HR desk PC too: it shows whether the webcam is found and the browser is recent enough.
+
 ## 1. What to buy
 
 | Item | Notes |
@@ -159,6 +179,16 @@ Then no PC needs step 6. The server PC needs the internet about once every two m
 2. **Staff:** add HR, managers, interviewers, and one **display** account for the lobby TV.
    Each person gets a temporary password and must choose their own at first sign-in.
 3. On the **Candidates** page the admin sees a **Server status** box: database, free disk, last backup.
+4. **Settings** (fill these in before the first drive; anything marked *Sample* is a starting value to confirm):
+   - **Company:** company name, short name, token prefix (tokens look like A-001), office address, logo
+     (PNG/JPEG/WebP, up to 1 MB; shown in the header, on the TV and in Excel exports). Press **Save** once.
+   - **Lists:** certifications, coding specialties, EHR / PM software, education, notice periods, sources,
+     languages. Rename, add, reorder, or untick **In use** to retire an item (it disappears from new forms
+     but stays on the candidates who have it). Items are never deleted.
+   - **Privacy notice:** **Start a new version**, have the English and Hindi text checked (legal adviser, and a
+     Hindi speaker), name the **contact person** for data requests and complaints (name + email or phone), then
+     **Publish as new version**. Earlier versions stay read-only; each consent keeps the version it was given.
+   - **Jobs, rounds & retention:** positions, interview rounds and scorecards, reject reasons, how long data is kept.
 
 ## 9. HR desk: webcam test
 
@@ -268,3 +298,29 @@ On other PCs: `trust-certificate.ps1 -Remove` and `set-hosts.ps1 -Remove`.
 | Anything else | `https://simplen.hirefolios.in/api/health` shows the status without signing in. Send `C:\hirefolios\logs` to your developer. |
 
 Send logs to your developer, **never** `C:\hirefolios\.env` (it holds the passwords).
+
+## 17. The settings file (`C:\hirefolios\.env`) — reference
+
+The installer writes this file; normally nobody edits it. Only Administrators can open it (Notepad, **Run as
+administrator**). After a change, restart the **Hirefolios** service (`services.msc` → right-click → Restart).
+If a value is missing or wrong, Hirefolios does not start and its log (`C:\hirefolios\logs\hirefolios.out.log`
+or `.err.log`) names the variable, for example `UPLOAD_DIR must be an absolute folder path`.
+
+| Variable | What it is | Default |
+|---|---|---|
+| `DATABASE_URL` | The database and its login (written by the installer) | required |
+| `BETTER_AUTH_URL` | The address staff type, e.g. `https://simplen.hirefolios.in` | required |
+| `BETTER_AUTH_SECRET` | Sign-in secret (generated; changing it signs everyone out) | required |
+| `UPLOAD_DIR` | Folder for photos, CVs and the logo | required |
+| `PORT`, `HOSTNAME` | Where the program listens (Caddy forwards to it) | 3000, 127.0.0.1 |
+| `BACKUP_DIR`, `BACKUP_KEEP_DAYS`, `BACKUP_COPY_DIR` | Backups folder, days kept, second copy (USB) | `C:\hirefolios-backups`, 14, none |
+| `STAFF_SESSION_HOURS` | How long staff stay signed in (1-24) | 12 |
+| `DISPLAY_SESSION_DAYS` | How long the lobby TV stays signed in (1-90) | 30 |
+| `MAX_UPLOAD_MB`, `MAX_CV_FILES`, `MAX_CV_PAGES` | Intake upload limits | 8, 5, 10 |
+| `PURGE_JOB`, `PURGE_INTERVAL_MINUTES` | The deletion job (retention): on/off and how often | on, 30 |
+| `OFFICE_HOURS` | The deletion job waits outside these hours, e.g. `09:00-19:00` | any time |
+| `RUN_MIGRATIONS`, `MIGRATIONS_DIR`, `SEED_ON_START` | Start-up database set-up (installer) | 1, app folder, 0 |
+| `PG_BIN`, `PG_SERVICE`, `PG_SUPERUSER_PASSWORD`, `APP_DOMAIN`, `HTTPS_OPTION`, `CLOUDFLARE_API_TOKEN` | Used by the install / backup / update scripts | written by the installer |
+
+Pinned versions (Node.js 24, PostgreSQL 16, Caddy, WinSW) live in `scripts\versions.json`; Hirefolios refuses to
+start on another Node.js or PostgreSQL major version and says which one it needs.
