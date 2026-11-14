@@ -20,8 +20,9 @@ export async function StatusCard({ tenantId }: { tenantId: string }) {
   const backupAge = s.lastBackupAt ? Date.now() - new Date(s.lastBackupAt).getTime() : null;
   const items: { label: string; value: string; ok: boolean }[] = [
     { label: "Database", value: s.database ? "Connected" : "Not reachable", ok: s.database },
+    { label: "File storage", value: `${s.storage.driver === "s3" ? "S3 bucket" : "Folder"}: ${s.storage.ok ? "reachable" : "not reachable"}`, ok: s.storage.ok },
     {
-      label: "Free disk (photos & CVs)",
+      label: s.storage.driver === "s3" ? "Free disk (server)" : "Free disk (photos & CVs)",
       value: s.uploads.freeGB === null ? (s.uploads.configured ? "Folder not found" : "UPLOAD_DIR not set") : `${s.uploads.freeGB} GB`,
       ok: s.uploads.freeGB !== null && s.uploads.freeGB >= 5,
     },
