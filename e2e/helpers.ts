@@ -1,15 +1,33 @@
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 
-// Better Auth allows 3 sign-ins per 10 s per IP, counted until 10 s after the last try.
-// Space them out instead of turning the limit off.
-let recent: number[] = [];
-async function paceSignIn() {
-  const now = Date.now();
-  recent = recent.filter((t) => now - t < 10_500);
-  if (recent.length >= 2) await new Promise((r) => setTimeout(r, 10_500 - (now - Math.max(...recent)) + 200));
-  recent = recent.filter((t) => Date.now() - t < 10_500);
-  recent.push(Date.now());
+// The server allows SIGN_IN_LIMIT ("20/60": attempts / seconds) per address; the count only resets once a whole window
+// passes after the last allowed attempt. Pace to it instead of turning the limit off (same .env as the server).
+const [LIMIT_MAX, LIMIT_SECONDS] = (process.env.SIGN_IN_LIMIT || "20/60").split("/").map(Number);
+const WINDOW_MS = LIMIT_SECONDS * 1000 + 300;
+let used = 0;
+let last = 0;
+export async function paceSignIn() {
+  if (Date.now() - last >= WINDOW_MS) used = 0;
+  if (used >= LIMIT_MAX - 1) {
+    await new Promise((r) => setTimeout(r, Math.max(0, last + WINDOW_MS - Date.now())));
+    used = 0;
+  }
+  used++;
+  last = Date.now();
+}
+
+/** Press "Sign in" on the filled form. Another process (e.g. `npm run smoke`) may have used this address's sign-in budget a
+ *  moment ago: on 429, wait for the window to pass and press again (once). */
+export async function submitSignIn(page: Page) {
+  for (let tries = 0; ; tries++) {
+    const res = page.waitForResponse((r) => r.url().includes("/api/auth/sign-in/email"));
+    await page.getByRole("button", { name: "Sign in" }).click();
+    if ((await res).status() !== 429 || tries === 1) return;
+    await page.waitForTimeout(WINDOW_MS);
+    used = 1;
+    last = Date.now();
+  }
 }
 
 export async function signIn(page: Page, who: { email: string; password: string }) {
@@ -17,15 +35,7 @@ export async function signIn(page: Page, who: { email: string; password: string 
   await page.goto("/login");
   await page.getByLabel("Email").fill(who.email);
   await page.getByLabel("Password").fill(who.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  // Another process (e.g. `npm run smoke`) may have used this IP's sign-in budget a moment ago.
-  const limited = page.getByText("Too many attempts");
-  await expect(limited.or(page.locator("header"))).toBeVisible();
-  if (await limited.isVisible()) {
-    await page.waitForTimeout(11_000);
-    recent = [Date.now()];
-    await page.getByRole("button", { name: "Sign in" }).click();
-  }
+  await submitSignIn(page);
   await expect(page).not.toHaveURL(/\/login$/);
 }
 

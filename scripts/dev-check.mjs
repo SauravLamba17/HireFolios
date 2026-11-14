@@ -51,7 +51,7 @@ try {
   const bad = log.split("\n").filter((l) => BAD.test(l));
   if (bad.length) problems.push("dev server output:\n  " + bad.join("\n  "));
   if (process.env.PURGE_JOB !== "off") {
-    const n = log.split("deletion job scheduled").length - 1;
+    const n = log.split("retention.scheduled").length - 1; // the deletion job's start-up log line (src/lib/purge.ts)
     if (n !== 1) problems.push(`deletion job scheduled ${n} times (expected once)`);
   }
 } catch (e) {

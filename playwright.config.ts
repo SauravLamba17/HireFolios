@@ -15,6 +15,7 @@ export default defineConfig({
   timeout: 90_000,
   use: {
     baseURL,
+    ignoreHTTPSErrors: process.env.E2E_IGNORE_HTTPS_ERRORS === "1", // a local Caddy test certificate (tls internal), never trusted system-wide
     channel: process.env.PW_CHANNEL || undefined, // chrome | msedge, else Playwright's own Chromium
     // Two fake webcams (moving test pattern) with permission already granted.
     launchOptions: { args: ["--use-fake-device-for-media-stream=device-count=2", "--use-fake-ui-for-media-stream"] },
@@ -23,6 +24,7 @@ export default defineConfig({
     command: "npm run start",
     url: `${baseURL}/login`,
     reuseExistingServer: true,
+    ignoreHTTPSErrors: process.env.E2E_IGNORE_HTTPS_ERRORS === "1",
     timeout: 120_000,
   },
 });

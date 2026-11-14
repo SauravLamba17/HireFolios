@@ -1,12 +1,11 @@
 // Smoke test against a running server: `npm run smoke` (SMOKE_BASE_URL, default http://localhost:3000).
 // Creates two throwaway tenants (so tokens start at A-001), checks intake / lookup / files / search /
-// profile end to end, then deletes everything it created, rows and files. Needs DATABASE_URL and UPLOAD_DIR.
-import fs from "node:fs";
-import path from "node:path";
+// profile end to end, then deletes everything it created, rows and files. Needs the server's settings (.env): the database
+// and the same file storage (UPLOAD_DIR, or STORAGE_DRIVER=s3 + S3_*).
 import { eq, inArray, sql } from "drizzle-orm";
 import { db, pgClient } from "@/db";
 import * as s from "@/db/schema";
-import { uploadRoot } from "@/lib/files";
+import { storage } from "@/lib/storage";
 import { DEFAULT_NOTICE_VERSION as NOTICE_VERSION } from "@/lib/notice"; // a new tenant starts with this version
 import { planPurge, runPurge } from "@/lib/purge";
 import { createStaff } from "@/lib/staff";
@@ -89,10 +88,15 @@ function intakeForm(body: unknown, files: { photo?: boolean; pages?: number } = 
 }
 const postIntake = (body: unknown, files?: { photo?: boolean; pages?: number }) => call("/api/intake", { method: "POST", body: intakeForm(body, files) });
 
-const filesOnDisk = (root: string, tenantId: string) => {
-  const dir = path.join(root, tenantId);
-  return fs.existsSync(dir) ? fs.readdirSync(dir, { recursive: true, withFileTypes: true }).filter((d) => d.isFile()).length : 0;
+// Files in the server's storage (a folder with STORAGE_DRIVER=local, the bucket with s3): the smoke test reads the
+// same settings as the server it tests.
+const stored = async (prefix: string) => {
+  const keys: string[] = [];
+  for await (const o of storage().list(prefix)) keys.push(o.key);
+  return keys;
 };
+const filesOnDisk = async (tenantId: string) => (await stored(`${tenantId}/`)).length;
+const fileExists = async (key: string) => (await storage().get(key)) !== null;
 
 async function makeTenant(slug: string) {
   const [t] = await db.insert(s.tenants).values({ name: `Smoke ${slug}`, slug: `smoke-${slug}-${RUN}`, tokenPrefix: "A" }).returning();
@@ -118,7 +122,7 @@ async function makeTenant(slug: string) {
   return { tenant: t, open: jobsRows[0], closed: jobsRows[1] };
 }
 
-async function cleanup(tenantIds: string[], root: string | null) {
+async function cleanup(tenantIds: string[]) {
   if (tenantIds.length === 0) return;
   const t = inArray(s.candidateFiles.tenantId, tenantIds);
   await db.delete(s.candidateFiles).where(t);
@@ -140,12 +144,13 @@ async function cleanup(tenantIds: string[], root: string | null) {
   await db.delete(s.stages).where(inArray(s.stages.tenantId, tenantIds));
   await db.delete(s.locations).where(inArray(s.locations.tenantId, tenantIds));
   await db.delete(s.tenants).where(inArray(s.tenants.id, tenantIds));
-  if (root) for (const id of tenantIds) fs.rmSync(path.join(root, id), { recursive: true, force: true });
+  for (const id of tenantIds) await storage().delete(await stored(`${id}/`));
 }
 
 async function main() {
-  const root = uploadRoot();
-  if (!root) throw new Error("UPLOAD_DIR must be set to an absolute path (same as the server's).");
+  const check0 = await storage().check();
+  if (!check0.ok) throw new Error(`File storage (${storage().driver}) is not reachable: ${check0.detail}. Use the same storage settings as the server.`);
+  console.log(`storage: ${storage().driver}`);
   const created: string[] = [];
   try {
     const A = await makeTenant("a");
@@ -195,7 +200,7 @@ async function main() {
     check("intake for another tenant's job → 400", r.status === 400, r.status);
     r = await call("/api/intake", { method: "POST", body: intakeForm(req1, { photo: true, pages: 2 }), headers: { origin: "http://evil.example" } });
     check("cross-site intake POST → 403", r.status === 403, r.status);
-    check("rejected saves wrote no files", filesOnDisk(root, A.tenant.id) === 0, filesOnDisk(root, A.tenant.id));
+    check("rejected saves wrote no files", (await filesOnDisk(A.tenant.id)) === 0, await filesOnDisk(A.tenant.id));
 
     r = await postIntake(req1, { photo: true, pages: 2 });
     const first = await r.json();
@@ -206,7 +211,7 @@ async function main() {
     const apps1 = await db.$count(s.applications, eq(s.applications.candidateId, first.candidateId));
     const files1 = await db.$count(s.candidateFiles, eq(s.candidateFiles.candidateId, first.candidateId));
     check("retry same client_request_id → same token, no duplicate", r.status === 200 && j.token === "A-001" && apps1 === 1 && files1 === 3, { status: r.status, token: j.token, apps1, files1 });
-    check("files stored under UPLOAD_DIR/<tenant>/<candidate>/", fs.readdirSync(path.join(root, A.tenant.id, first.candidateId)).length === 3);
+    check(`files stored in ${storage().driver} storage under <tenant>/<candidate>/`, (await stored(`${A.tenant.id}/${first.candidateId}/`)).length === 3);
 
     const [consentRow] = await db.select().from(s.consents).where(eq(s.consents.applicationId, first.applicationId));
     check("consent row saved with version, language, purposes", consentRow?.noticeVersion === NOTICE_VERSION && consentRow.language === "en" && consentRow.talentPool === true && consentRow.whatsapp === false, consentRow);
@@ -231,7 +236,7 @@ async function main() {
     const dupApps = await db.$count(s.applications, eq(s.applications.clientRequestId, req2.clientRequestId));
     const dbFiles = await db.$count(s.candidateFiles, eq(s.candidateFiles.tenantId, A.tenant.id));
     check("double-tap Save → one application, same token", b1.token === b2.token && b1.token === "A-003" && dupApps === 1, { b1: b1.token ?? b1, b2: b2.token ?? b2, dupApps });
-    check("no orphan files on disk after the losing request", filesOnDisk(root, A.tenant.id) === dbFiles, { disk: filesOnDisk(root, A.tenant.id), db: dbFiles });
+    check("no orphan files in storage after the losing request", (await filesOnDisk(A.tenant.id)) === dbFiles, { stored: await filesOnDisk(A.tenant.id), db: dbFiles });
     check("similar name + same DOB under another mobile → possible duplicate", b1.duplicates?.some((d: { id: string; reason: string }) => d.id === first.candidateId && /similar name/.test(d.reason)), b1.duplicates);
 
     const req3 = { clientRequestId: crypto.randomUUID(), mobile: m3, details: baseDetails(A.open.id, { fullName: "Smoke Rahul Verma", dateOfBirth: "1995-09-01", certifications: ["CCS"], codingSpecialties: [], ehrSoftware: ["NextGen"], nightShiftOk: false, skills: "charge entry" }), consent: consent() };
@@ -265,11 +270,28 @@ async function main() {
     check("bad filter values in URL are ignored, not a 500", garbage.status === 200, garbage.status);
 
     r = await call(`/api/files/${photoId}`);
-    check(
-      "file served to same-tenant staff with nosniff + private cache",
-      r.status === 200 && r.headers.get("content-type") === "image/jpeg" && r.headers.get("x-content-type-options") === "nosniff" && /private/.test(r.headers.get("cache-control") ?? ""),
-      [r.status, ...r.headers],
-    );
+    if (r.status === 302) {
+      // S3_SIGNED_URLS=on: a short-lived signed link, never cached; it stops working after S3_SIGNED_URL_SECONDS
+      const link = r.headers.get("location") ?? "";
+      const seconds = Number(new URL(link).searchParams.get("X-Amz-Expires"));
+      check(
+        "file: signed S3 link (no-store) with the configured expiry",
+        r.headers.get("cache-control") === "no-store" && seconds === Number(process.env.S3_SIGNED_URL_SECONDS || 60),
+        [seconds, ...r.headers],
+      );
+      const got = await fetch(link);
+      check("file: signed link serves the photo as image/jpeg", got.status === 200 && got.headers.get("content-type") === "image/jpeg", got.status);
+      if (seconds <= 15) {
+        await new Promise((res) => setTimeout(res, (seconds + 2) * 1000));
+        const late = await fetch(link);
+        check("file: signed link refused after it expires", late.status === 403, late.status);
+      }
+    } else
+      check(
+        "file served to same-tenant staff with nosniff + private cache",
+        r.status === 200 && r.headers.get("content-type") === "image/jpeg" && r.headers.get("x-content-type-options") === "nosniff" && /private/.test(r.headers.get("cache-control") ?? ""),
+        [r.status, ...r.headers],
+      );
     r = await call(`/api/files/${photoId}`, { anon: true });
     check("file signed out → 401", r.status === 401, r.status);
     r = await call(`/api/files/${bFile.id}`);
@@ -370,7 +392,7 @@ async function main() {
     check("interviewer opens the assigned candidate's profile", (await iv(`/dashboard/candidates/${m2app.candidateId}`)).status === 200);
     check("interviewer gets 404 for a candidate never assigned to them", (await iv(`/dashboard/candidates/${first.candidateId}`)).status === 404);
     check("interviewer gets 404 for an unassigned candidate's file", (await iv(`/api/files/${unassignedPhoto}`)).status === 404);
-    check("interviewer can open the assigned candidate's photo", (await iv(`/api/files/${m2photo.id}`)).status === 200);
+    check("interviewer can open the assigned candidate's photo", [200, 302].includes((await iv(`/api/files/${m2photo.id}`)).status)); // 302: a signed S3 link (S3_SIGNED_URLS=on)
     check("interviewer has no candidate list (redirect to /interview)", new URL((await iv("/dashboard")).headers.get("location") ?? "x:", BASE).pathname === "/interview");
     check("interviewer can't act on the drive board (403)", (await drive("i1", { action: "endDay" })).status === 403);
     check("lobby TV login: candidate files 404, board redirect, intake API 403", (await as("tv")(`/api/files/${m2photo.id}`)).status === 404 && (await as("tv")("/dashboard/drive")).status === 307 && (await as("tv")(`/api/candidates/lookup?mobile=${m1}`)).status === 403);
@@ -433,8 +455,7 @@ async function main() {
         for (const kind of ["photo", "cv_page"] as const) {
           const fid = crypto.randomUUID();
           const key = `${P.tenant.id}/${c.id}/${fid}.jpg`;
-          fs.mkdirSync(path.join(root, P.tenant.id, c.id), { recursive: true });
-          fs.writeFileSync(path.join(root, key), jpegBytes);
+          await storage().put(key, jpegBytes, "image/jpeg");
           await db.insert(s.candidateFiles).values({ id: fid, tenantId: P.tenant.id, candidateId: c.id, applicationId: a.id, kind, storageKey: key, mimeType: "image/jpeg", sizeBytes: 4 });
           files.push(key);
         }
@@ -451,13 +472,15 @@ async function main() {
     await mkCandidate("newer", [{ outcome: "rejected", purge: ago(10), photo: ahead(10) }, { outcome: "in_progress", purge: null, photo: null }], false); // → keep
 
     const dry = await runPurge({ dryRun: true, tenantId: P.tenant.id, now: nowP });
-    check("deletion dry run: 1 candidate and 1 photo due, nothing deleted yet", JSON.stringify(dry) === JSON.stringify([{ tenantId: P.tenant.id, photos: 1, candidates: 1, files: 0 }]) && fs.existsSync(path.join(root, purgeCase.old.files[0])), dry);
+    check("deletion dry run: 1 candidate and 1 photo due, nothing deleted yet", JSON.stringify(dry) === JSON.stringify([{ tenantId: P.tenant.id, photos: 1, candidates: 1, files: 0 }]) && (await fileExists(purgeCase.old.files[0])), dry);
     const later = await planPurge(new Date(nowP.getTime() + 31 * DAY), P.tenant.id);
     check("dry run 31 days ahead also includes the photo-only candidate", later[0]?.candidates.sort().join() === [purgeCase.old.id, purgeCase.photoOnly.id].sort().join(), later);
     const realRun = await runPurge({ dryRun: false, tenantId: P.tenant.id, now: nowP });
     check("real run: same counts as the dry run, files removed", realRun[0].candidates === 1 && realRun[0].photos === 1 && realRun[0].files === 3, realRun);
     const exists = async (table: typeof s.candidates, id: string) => (await db.$count(table, eq(table.id, id))) === 1;
-    const fileState = (k: string) => fs.existsSync(path.join(root, k));
+    const state = new Map<string, boolean>();
+    for (const c of Object.values(purgeCase)) for (const k of c.files) state.set(k, await fileExists(k));
+    const fileState = (k: string) => state.get(k) === true;
     check(
       "erased: the expired candidate, rows and files",
       !(await exists(s.candidates, purgeCase.old.id)) && (await db.$count(s.applications, eq(s.applications.candidateId, purgeCase.old.id))) === 0 && purgeCase.old.files.every((k) => !fileState(k)),
@@ -475,9 +498,11 @@ async function main() {
     const again = await runPurge({ dryRun: false, tenantId: P.tenant.id, now: nowP });
     check("running again deletes nothing more (idempotent)", again[0].candidates === 0 && again[0].photos === 0, again);
   } finally {
-    await cleanup(created, root);
+    await cleanup(created);
     const left = created.length ? await db.$count(s.tenants, inArray(s.tenants.id, created)) : 0;
-    check("cleanup removed smoke tenants and files", left === 0 && created.every((id) => !fs.existsSync(path.join(root, id))), left);
+    let filesLeft = 0;
+    for (const id of created) filesLeft += await filesOnDisk(id);
+    check("cleanup removed smoke tenants and files", left === 0 && filesLeft === 0, { left, filesLeft });
   }
 }
 
