@@ -50,6 +50,13 @@
       "when": 1794501444539,
       "tag": "0006_rediscovery",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794671174191,
+      "tag": "0007_security",
+      "breakpoints": true
     }
   ]
 }

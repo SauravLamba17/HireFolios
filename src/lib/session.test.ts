@@ -9,6 +9,13 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
+// session.ts reads the server configuration (two-factor roles, API limits): a minimal valid one for these tests
+Object.assign(process.env, {
+  DATABASE_URL: "postgres://u:p@localhost:5432/test",
+  BETTER_AUTH_URL: "http://localhost:3000",
+  BETTER_AUTH_SECRET: "x".repeat(32),
+  UPLOAD_DIR: process.platform === "win32" ? "C:\\uploads" : "/uploads",
+});
 const { ROLES, can, homePath, requireStaff, requireStaffApi } = await import("./session");
 type Permission = import("./session").Permission;
 const { roleEnum } = await import("@/db/schema");
@@ -108,7 +115,7 @@ describe("requireStaffApi", () => {
     getSession.mockResolvedValue(user({ role: "admin" }));
     const { staff, error } = await requireStaffApi(req(), "users");
     expect(error).toBeUndefined();
-    expect(staff).toEqual({ id: "u1", name: "A", email: "a@example.test", role: "admin", tenantId: "t1", mustChangePassword: false });
+    expect(staff).toEqual({ id: "u1", name: "A", email: "a@example.test", role: "admin", tenantId: "t1", mustChangePassword: false, twoFactorEnabled: false });
   });
 
   it("403 for a cross-site write, before looking at the session", async () => {

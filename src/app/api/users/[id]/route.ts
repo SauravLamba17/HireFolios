@@ -1,13 +1,19 @@
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { roleEnum, sessions, users } from "@/db/schema";
+import { roleEnum, sessions, twoFactors, users } from "@/db/schema";
 import { requireStaffApi } from "@/lib/session";
 import { audit } from "@/lib/staff";
 
 const UpdateStaff = z
-  .object({ role: z.enum(roleEnum.enumValues, "Choose a role").optional(), active: z.boolean().optional(), signOut: z.literal(true).optional() })
-  .refine((v) => v.role !== undefined || v.active !== undefined || v.signOut, "Nothing to change");
+  .object({
+    role: z.enum(roleEnum.enumValues, "Choose a role").optional(),
+    active: z.boolean().optional(),
+    signOut: z.literal(true).optional(),
+    resetTwoFactor: z.literal(true).optional(), // lost phone: they set it up again at the next sign-in
+    unlock: z.literal(true).optional(), // locked after wrong passwords
+  })
+  .refine((v) => v.role !== undefined || v.active !== undefined || v.signOut || v.resetTwoFactor || v.unlock, "Nothing to change");
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { staff, error } = await requireStaffApi(req, "users");
@@ -29,6 +35,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (role !== undefined && role !== target.role) {
       await tx.update(users).set({ role }).where(sameTenant);
       await audit(tx, { ...base, action: "user.role_change", meta: { from: target.role, to: role } });
+    }
+    if (parsed.data.resetTwoFactor) {
+      await tx.delete(twoFactors).where(eq(twoFactors.userId, id));
+      await tx.update(users).set({ twoFactorEnabled: false }).where(sameTenant);
+      await tx.delete(sessions).where(eq(sessions.userId, id));
+      await audit(tx, { ...base, action: "user.two_factor_reset" });
+    }
+    if (parsed.data.unlock) {
+      await tx.update(users).set({ lockedUntil: null, failedSignIns: 0 }).where(sameTenant);
+      await audit(tx, { ...base, action: "user.unlock" });
     }
     if (parsed.data.signOut) {
       // e.g. the lobby TV's 30-day session: ends it on every device now

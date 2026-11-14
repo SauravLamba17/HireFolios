@@ -24,6 +24,7 @@ export function UserMenu({ name, role }: { name: string; role: string }) {
         {name} · {role}
       </p>
       <MenuLinkItem link={{ href: "/account/password", label: "Change password" }} />
+      <MenuLinkItem link={{ href: "/account/security", label: "Sign-in security (two-factor)" }} />
       <SignOutButton asMenuItem className={menuItemClass(false)} />
     </Menu>
   );

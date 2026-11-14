@@ -174,6 +174,10 @@ export const users = pgTable(
     active: boolean("active").notNull().default(true),
     // Set when an admin creates the account or resets its password; cleared when the user changes it.
     mustChangePassword: boolean("must_change_password").notNull().default(false),
+    // Phase 5 (internet-facing): authenticator-app two-factor (Better Auth plugin) and lockout after wrong passwords.
+    twoFactorEnabled: boolean("two_factor_enabled").notNull().default(false),
+    failedSignIns: integer("failed_sign_ins").notNull().default(0),
+    lockedUntil: ts("locked_until"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -218,6 +222,31 @@ export const accounts = pgTable(
   },
   (t) => [index("accounts_user_idx").on(t.userId)],
 );
+
+// Two-factor secrets and recovery codes (Better Auth two-factor plugin; it stores them encrypted with the auth secret).
+export const twoFactors = pgTable(
+  "two_factors",
+  {
+    id: text("id").primaryKey(),
+    secret: text("secret").notNull(),
+    backupCodes: text("backup_codes").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    verified: boolean("verified").notNull().default(true),
+    failedVerificationCount: integer("failed_verification_count").notNull().default(0),
+    lockedUntil: ts("locked_until"),
+  },
+  (t) => [index("two_factors_user_idx").on(t.userId), index("two_factors_secret_idx").on(t.secret)],
+);
+
+// Sign-in rate limits kept in the database (Better Auth), so they survive restarts and hold across app instances.
+export const rateLimits = pgTable("rate_limits", {
+  id: text("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  count: integer("count").notNull(),
+  lastRequest: bigint("last_request", { mode: "number" }).notNull(),
+});
 
 export const verifications = pgTable(
   "verifications",

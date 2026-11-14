@@ -11,7 +11,7 @@ export const metadata: Metadata = { title: "Staff" };
 export default async function UsersPage() {
   const staff = await requireStaff("users");
   const rows = await db
-    .select({ id: users.id, name: users.name, email: users.email, role: users.role, active: users.active, mustChangePassword: users.mustChangePassword, createdAt: users.createdAt })
+    .select({ id: users.id, name: users.name, email: users.email, role: users.role, active: users.active, mustChangePassword: users.mustChangePassword, twoFactorEnabled: users.twoFactorEnabled, lockedUntil: users.lockedUntil, createdAt: users.createdAt })
     .from(users)
     .where(eq(users.tenantId, staff.tenantId))
     .orderBy(asc(users.createdAt));
@@ -20,7 +20,7 @@ export default async function UsersPage() {
     <UsersManager
       currentUserId={staff.id}
       roles={roleEnum.enumValues.map((value) => ({ value, label: ROLE_LABELS[value] }))}
-      users={rows.map(({ createdAt, ...r }) => ({ ...r, added: formatDateIST(createdAt) }))}
+      users={rows.map(({ createdAt, lockedUntil, ...r }) => ({ ...r, added: formatDateIST(createdAt), locked: lockedUntil !== null && lockedUntil > new Date() }))}
     />
   );
 }

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { send } from "@/lib/send";
 
-type Row = { id: string; name: string; email: string; role: string; active: boolean; mustChangePassword: boolean; added: string };
+type Row = { id: string; name: string; email: string; role: string; active: boolean; mustChangePassword: boolean; twoFactorEnabled: boolean; locked: boolean; added: string };
 type Option = { value: string; label: string };
 
 // No look-alike characters (0/O, 1/l/I) so it can be read out loud.
@@ -215,6 +215,8 @@ export function UsersManager({ users, roles, currentUserId }: { users: Row[]; ro
                     {u.active && u.mustChangePassword && (
                       <div className="mt-1 text-xs text-amber-800">Temporary password</div>
                     )}
+                    {u.locked && <div className="mt-1 text-xs font-medium text-red-800">Locked (wrong passwords)</div>}
+                    <div className="mt-1 text-xs text-slate-600">{u.twoFactorEnabled ? "Two-factor on" : "Two-factor off"}</div>
                   </td>
                   <td className="px-4 py-3 text-sm whitespace-nowrap">{u.added}</td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
@@ -243,6 +245,24 @@ export function UsersManager({ users, roles, currentUserId }: { users: Row[]; ro
                         }}
                       >
                         Sign out everywhere
+                      </button>
+                    )}
+                    {!self && u.locked && (
+                      <button type="button" disabled={busy} className="btn btn-secondary mr-2" onClick={() => run(() => send(`/api/users/${u.id}`, "PATCH", { unlock: true }), `${u.name} can sign in again.`)}>
+                        Unlock
+                      </button>
+                    )}
+                    {!self && u.twoFactorEnabled && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className="btn btn-secondary mr-2"
+                        onClick={() => {
+                          if (!confirm(`Reset two-factor sign-in for ${u.name}? Use this when they lost their phone. They are signed out and set it up again.`)) return;
+                          run(() => send(`/api/users/${u.id}`, "PATCH", { resetTwoFactor: true }), `Two-factor reset for ${u.name}.`);
+                        }}
+                      >
+                        Reset two-factor
                       </button>
                     )}
                     {!self && (
