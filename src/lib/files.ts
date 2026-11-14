@@ -1,8 +1,7 @@
-// Candidate files on disk, under UPLOAD_DIR/<tenant>/<candidate>/. Never inside public/;
-// served only by GET /api/files/[id] after a tenant check.
+// Candidate file helpers: type sniffing, storage keys (<tenant>/<candidate>/<file>), checksums. The files themselves
+// live in storage (src/lib/storage.ts: UPLOAD_DIR or S3), never inside public/; served only by GET /api/files/[id].
 import "server-only";
 import { createHash } from "node:crypto";
-import fs from "node:fs/promises";
 import path from "node:path";
 
 export const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -40,14 +39,5 @@ export const storageKey = (tenantId: string, candidateId: string, fileId: string
 
 export const extensionOf = (type: string) => EXT[type as FileType] ?? "bin";
 
-/** Writes a new file (never overwrites). Returns the absolute path so a failed save can remove it. */
-export async function writeFileUnder(root: string, key: string, data: Uint8Array) {
-  const full = path.join(root, key);
-  await fs.mkdir(path.dirname(full), { recursive: true });
-  await fs.writeFile(full, data, { flag: "wx" });
-  return full;
-}
-
-export const readFileUnder = (root: string, key: string) => fs.readFile(path.join(root, key));
 
 export const sha256 = (data: Uint8Array) => createHash("sha256").update(data).digest("hex");

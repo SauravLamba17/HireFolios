@@ -1,9 +1,9 @@
-import fs from "node:fs/promises";
 import { and, asc, eq, lt, sql } from "drizzle-orm";
 import { db, isUniqueViolation } from "@/db";
 import { applications, candidateFiles, candidates, consents, dailyCounters, jobs, locations, otherOffers, stages } from "@/db/schema";
 import { searchTextFor } from "@/lib/candidate-search";
-import { DOCX, sniffType, storageKey, sha256, uploadRoot, writeFileUnder, type FileType } from "@/lib/files";
+import { DOCX, sniffType, storageKey, sha256, type FileType } from "@/lib/files";
+import { storage } from "@/lib/storage";
 import { getCompany } from "@/lib/company";
 import { uploadLimits } from "@/lib/config";
 import { firstIssue, makeIntakeRequest, type IntakeResult } from "@/lib/intake";
@@ -14,9 +14,12 @@ import { publish } from "@/lib/live";
 import { lpaToRupees } from "@/lib/money";
 import { requireStaffApi } from "@/lib/session";
 import { audit } from "@/lib/staff";
+import { log } from "@/lib/log";
 
 
 const bad = (error: string, status = 400) => Response.json({ error }, { status });
+/** File storage (disk or S3) refused a write: the whole intake rolls back. */
+class StorageDown extends Error {}
 
 class IntakeError extends Error {}
 
@@ -85,8 +88,6 @@ async function resultFor(tenantId: string, clientRequestId: string): Promise<Int
 export async function POST(req: Request) {
   const { staff, error } = await requireStaffApi(req, "intake");
   if (error) return error;
-  const root = uploadRoot();
-  if (!root) return bad("File storage is not set up on the server (UPLOAD_DIR). Ask your admin.", 500);
   const L = uploadLimits();
   const maxRequest = L.maxPhotoBytes + L.maxCvPages * L.maxPageBytes + L.maxCvFiles * L.maxUploadBytes + 256 * 1024;
   if (Number(req.headers.get("content-length") ?? 0) > maxRequest) return bad("The upload is too large.", 413);
@@ -240,7 +241,12 @@ export async function POST(req: Request) {
       for (const u of uploads) {
         const id = crypto.randomUUID();
         const key = storageKey(tenant, cand.id, id, u.type);
-        written.push(await writeFileUnder(root, key, u.data));
+        written.push(key); // before the put: a put that times out may still have stored the file, so roll it back too
+        await storage()
+          .put(key, u.data, u.type)
+          .catch((err) => {
+            throw new StorageDown(String(err?.code ?? err?.name ?? err)); // e.g. ECONNREFUSED, TimeoutError (no personal data)
+          });
         await tx.insert(candidateFiles).values({
           id,
           tenantId: tenant,
@@ -271,8 +277,12 @@ export async function POST(req: Request) {
       });
     });
   } catch (e) {
-    await Promise.all(written.map((f) => fs.rm(f, { force: true })));
+    if (written.length) await storage().delete(written).catch(() => {}); // the database rolled back: drop its files too
     if (e instanceof IntakeError) return bad(e.message);
+    if (e instanceof StorageDown) {
+      log.error("intake.storage_failed", { driver: storage().driver, error: e.message });
+      return bad("The photo and CV could not be stored (file storage is not reachable), so nothing was saved. Everything typed is still here: press Save again in a minute.", 503);
+    }
     // Double-tap: the same request was saved by a parallel call a moment ago.
     if (isUniqueViolation(e, "applications_tenant_client_request_uq")) {
       const again = await resultFor(staff.tenantId, clientRequestId);

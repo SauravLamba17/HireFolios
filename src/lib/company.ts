@@ -7,7 +7,8 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { tenants } from "@/db/schema";
-import { extensionOf, readFileUnder, sniffType, uploadRoot } from "@/lib/files";
+import { extensionOf, sniffType } from "@/lib/files";
+import { storage } from "@/lib/storage";
 import { APP_TIME_ZONE } from "@/lib/ist";
 
 export type Company = {
@@ -79,9 +80,8 @@ export function checkLogo(bytes: Uint8Array): { type: string; ext: string } | st
 /** Name and logo for Excel exports (ExcelJS takes PNG and JPEG; a WebP logo is left out, the name stays). */
 export async function exportCompany(tenantId: string): Promise<{ name: string; logo?: { data: Uint8Array; extension: "png" | "jpeg" } }> {
   const c = await getCompany(tenantId);
-  const root = uploadRoot();
   const extension = c.logoType === "image/png" ? "png" : c.logoType === "image/jpeg" ? "jpeg" : null;
-  if (!root || !c.logoKey || !extension) return { name: c.name };
-  const data = await readFileUnder(root, c.logoKey).catch(() => null);
+  if (!c.logoKey || !extension) return { name: c.name };
+  const data = await storage().get(c.logoKey).catch(() => null);
   return data ? { name: c.name, logo: { data: new Uint8Array(data), extension } } : { name: c.name };
 }

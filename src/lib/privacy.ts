@@ -6,7 +6,8 @@ import { zipSync, strToU8 } from "fflate";
 import { db, type Tx } from "@/db";
 import { applications, candidateFiles, candidates, consents, dsrRequests, jobs, queueEvents, scorecards, stages } from "@/db/schema";
 import { searchTextFor } from "@/lib/candidate-search";
-import { extensionOf, readFileUnder, uploadRoot } from "@/lib/files";
+import { extensionOf } from "@/lib/files";
+import { storage } from "@/lib/storage";
 import { FlowError, NotFoundError } from "@/lib/flow";
 import { eraseCandidateRows } from "@/lib/purge";
 import { APP_UTC_OFFSET } from "@/lib/ist";
@@ -144,10 +145,9 @@ export async function accessZip(staff: Staff, id: string): Promise<{ zip: Uint8A
     files: files.map((f) => ({ file: `files/${f.kind}-${f.pageNo ?? 1}-${f.id.slice(0, 8)}.${extensionOf(f.type)}`, kind: f.kind })),
   };
   const out: Record<string, Uint8Array> = { "data.json": strToU8(JSON.stringify(data, null, 2)) };
-  const root = uploadRoot();
   for (const [i, f] of files.entries()) {
-    const bytes = root ? await readFileUnder(root, f.key).catch(() => null) : null;
-    if (bytes) out[data.files[i].file] = new Uint8Array(bytes);
+    const bytes = await storage().get(f.key); // a storage outage fails the export (never a ZIP silently missing files)
+    if (bytes) out[data.files[i].file] = bytes;
   }
   await audit(db, { tenantId: t, actorUserId: staff.id, action: "dsr.access_export", entityType: "dsr_request", entityId: id, meta: { candidateId: cid, files: files.length } });
   return { zip: zipSync(out, { level: 6 }), name: `data-request-${id.slice(0, 8)}.zip` };

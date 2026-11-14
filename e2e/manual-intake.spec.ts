@@ -1,8 +1,7 @@
-import fs from "node:fs";
-import path from "node:path";
 import { expect, test } from "@playwright/test";
 import postgres from "postgres";
 import { signIn } from "./helpers";
+import { removeFiles } from "./storage";
 
 // PERMANENT RULE (CLAUDE.md): HR can always register a candidate by typing every field by hand.
 // No CV, no webcam, no auto-fill, nothing from the internet: the photo comes from the upload fallback.
@@ -13,13 +12,12 @@ const name = `E2E Manual ${run}`;
 const sql = postgres(process.env.DATABASE_URL!);
 
 test.afterAll(async () => {
-  const uploads = process.env.UPLOAD_DIR;
   for (const c of await sql<{ id: string; tenant_id: string }[]>`select id, tenant_id from candidates where mobile = ${mobile}`) {
     await sql`delete from candidate_files where candidate_id = ${c.id}`;
     await sql`delete from consents where candidate_id = ${c.id}`;
     await sql`delete from applications where candidate_id = ${c.id}`;
     await sql`delete from candidates where id = ${c.id}`;
-    if (uploads && path.isAbsolute(uploads)) fs.rmSync(path.join(uploads, c.tenant_id, c.id), { recursive: true, force: true });
+    await removeFiles(`${c.tenant_id}/${c.id}/`); // the server's storage (folder or S3)
   }
   await sql.end();
 });

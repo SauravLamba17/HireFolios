@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { jobs, tenants } from "@/db/schema";
 import { getCompany } from "@/lib/company";
 import { uploadLimits } from "@/lib/config";
-import { uploadRoot } from "@/lib/files";
+import { config } from "@/lib/config";
 import { getOptionLists } from "@/lib/lists-db";
 import { getActiveNotice } from "@/lib/notice-db";
 import { requireStaff } from "@/lib/session";
@@ -15,12 +15,13 @@ export const metadata: Metadata = { title: "New candidate" };
 // PC intake (webcam): Mobile → Details → Consent → CV → Photo → Save → Token.
 export default async function IntakePage() {
   const staff = await requireStaff("intake");
-  if (!uploadRoot()) {
+  const c = config();
+  if (c.STORAGE_DRIVER === "local" ? !c.UPLOAD_DIR : !c.S3_BUCKET) {
     return (
       <div className="mx-auto max-w-3xl space-y-4">
         <h1 className="text-2xl font-semibold">New candidate</h1>
         <p role="alert" className="alert-error">
-          File storage is not set up on the server: UPLOAD_DIR must be an absolute folder path in the server&apos;s .env. Ask your admin.
+          File storage is not set up on the server (UPLOAD_DIR, or S3_BUCKET with STORAGE_DRIVER=s3, in the server&apos;s settings). Ask your admin.
         </p>
       </div>
     );

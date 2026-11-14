@@ -1,8 +1,8 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { tenants } from "@/db/schema";
-import { readFileUnder, uploadRoot } from "@/lib/files";
 import { requireStaffApi } from "@/lib/session";
+import { storage } from "@/lib/storage";
 
 const notFound = () => Response.json({ error: "Not found" }, { status: 404 });
 
@@ -11,10 +11,9 @@ const notFound = () => Response.json({ error: "Not found" }, { status: 404 });
 export async function GET(req: Request) {
   const { staff, error } = await requireStaffApi(req);
   if (error) return error;
-  const root = uploadRoot();
   const [t] = await db.select({ key: tenants.logoKey, type: tenants.logoType }).from(tenants).where(eq(tenants.id, staff.tenantId));
-  if (!root || !t?.key || !t.type) return notFound();
-  const data = await readFileUnder(root, t.key).catch(() => null);
+  if (!t?.key || !t.type) return notFound();
+  const data = await storage().get(t.key).catch(() => null);
   if (!data) return notFound();
   return new Response(new Uint8Array(data), {
     headers: {

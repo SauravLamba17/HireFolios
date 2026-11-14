@@ -1,11 +1,9 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { tenants } from "@/db/schema";
 import { act, badRequest } from "@/lib/api";
 import { checkLogo, CompanyInput, MAX_LOGO_BYTES } from "@/lib/company";
-import { uploadRoot, writeFileUnder } from "@/lib/files";
+import { storage } from "@/lib/storage";
 import { firstIssue } from "@/lib/intake";
 import { publish } from "@/lib/live";
 import { requireStaffApi } from "@/lib/session";
@@ -32,15 +30,13 @@ async function oldLogo(tenantId: string) {
   return t?.key ?? null;
 }
 // The old file goes only after the new row is committed.
-async function unlinkQuietly(root: string, key: string | null) {
-  if (key) await fs.rm(path.join(root, key), { force: true }).catch(() => {});
+async function unlinkQuietly(key: string | null) {
+  if (key) await storage().delete([key]).catch(() => {});
 }
 
 export async function POST(req: Request) {
   const { staff, error } = await requireStaffApi(req, "settings");
   if (error) return error;
-  const root = uploadRoot();
-  if (!root) return badRequest("File storage is not set up on the server (UPLOAD_DIR).");
   if (Number(req.headers.get("content-length") ?? 0) > MAX_LOGO_BYTES + 64 * 1024) return badRequest("The logo must be 1 MB or smaller.");
   const form = await req.formData().catch(() => null);
   const file = form?.get("logo");
@@ -50,17 +46,17 @@ export async function POST(req: Request) {
   if (typeof ok === "string") return badRequest(ok);
   const key = `${staff.tenantId}/company/logo-${crypto.randomUUID()}.${ok.ext}`;
   const before = await oldLogo(staff.tenantId);
-  const full = await writeFileUnder(root, key, bytes);
+  await storage().put(key, bytes, ok.type);
   try {
     await db.transaction(async (tx) => {
       await tx.update(tenants).set({ logoKey: key, logoType: ok.type, logoUpdatedAt: new Date() }).where(eq(tenants.id, staff.tenantId));
       await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "company.logo", entityType: "tenant", entityId: staff.tenantId, meta: { type: ok.type } });
     });
   } catch (e) {
-    await fs.rm(full, { force: true }).catch(() => {});
+    await unlinkQuietly(key);
     throw e;
   }
-  await unlinkQuietly(root, before);
+  await unlinkQuietly(before);
   publish(staff.tenantId);
   return Response.json({ ok: true });
 }
@@ -73,8 +69,7 @@ export async function DELETE(req: Request) {
     await tx.update(tenants).set({ logoKey: null, logoType: null, logoUpdatedAt: new Date() }).where(eq(tenants.id, staff.tenantId));
     await audit(tx, { tenantId: staff.tenantId, actorUserId: staff.id, action: "company.logo_remove", entityType: "tenant", entityId: staff.tenantId });
   });
-  const root = uploadRoot();
-  if (root) await unlinkQuietly(root, before);
+  await unlinkQuietly(before);
   publish(staff.tenantId);
   return Response.json({ ok: true });
 }

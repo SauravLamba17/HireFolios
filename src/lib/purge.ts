@@ -1,17 +1,16 @@
 // Automatic deletion (retention) and "erase now". Decisions come only from src/lib/retention.ts.
 // Database rows go in one transaction per candidate; files on disk are removed after it commits.
 import "server-only";
-import fs from "node:fs/promises";
-import path from "node:path";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
 import { applications, candidateFiles, candidates, consents, queueEvents, scorecards, tenants } from "@/db/schema";
 import { config, inOfficeHours } from "@/lib/config";
-import { uploadRoot } from "@/lib/files";
 import type { Outcome } from "@/lib/flow";
 import { SETTINGS } from "@/lib/rediscovery/settings";
 import { candidateErasable, photoErasable } from "@/lib/retention";
 import { audit } from "@/lib/staff";
+import { storage } from "@/lib/storage";
+import { log } from "@/lib/log";
 
 const toDate = (v: string | Date | null) => (v === null ? null : new Date(v));
 
@@ -99,22 +98,16 @@ export async function eraseCandidateRows(tx: Tx, tenantId: string, candidateId: 
   return files.map((f) => f.key);
 }
 
+/** Removes these files from storage (local folder or S3) after the database rows are gone. Returns how many. */
 export async function unlinkAll(keys: string[]) {
-  const root = uploadRoot();
-  if (!root) return 0;
-  let n = 0;
-  for (const key of keys) {
-    try {
-      await fs.rm(path.join(root, key), { force: true });
-      n++;
-    } catch (e) {
-      console.error(`purge: could not remove a file (${(e as Error).message})`); // no names or paths with personal data
-    }
+  if (!keys.length) return 0;
+  try {
+    return await storage().delete(keys);
+  } catch (e) {
+    // no names or keys with personal data in the log; the next run cannot find these rows again, so say so loudly
+    log.error("purge.files_not_removed", { count: keys.length, reason: (e as Error).message });
+    return 0;
   }
-  // tidy empty candidate folders
-  const dirs = new Set(keys.map((k) => path.join(root, path.dirname(k))));
-  for (const d of dirs) await fs.rmdir(d).catch(() => {});
-  return n;
 }
 
 export type PurgeCounts = { tenantId: string; photos: number; candidates: number; files: number };
@@ -174,9 +167,9 @@ async function tick() {
   try {
     const counts = await runPurge({ dryRun: false });
     const total = counts.reduce((n, c) => n + c.photos + c.candidates, 0);
-    if (total) console.log(`retention: deleted ${counts.reduce((n, c) => n + c.candidates, 0)} candidates and ${counts.reduce((n, c) => n + c.photos, 0)} photos`);
+    if (total) log.info("retention.deleted", { candidates: counts.reduce((n, c) => n + c.candidates, 0), photos: counts.reduce((n, c) => n + c.photos, 0) });
   } catch (e) {
-    console.error("retention job failed:", (e as Error).message);
+    log.error("retention.failed", { reason: (e as Error).message });
   } finally {
     g.purgeRunning = false;
   }
@@ -185,7 +178,7 @@ async function tick() {
 export function startPurgeScheduler() {
   if (g.purgeTimer) return;
   const { PURGE_INTERVAL_MINUTES: every, OFFICE_HOURS: hours } = config();
-  console.log(`deletion job scheduled (every ${every} min${hours ? `, outside office hours ${hours}` : ""})`);
+  log.info("retention.scheduled", { everyMinutes: every, officeHours: hours ?? null });
   g.purgeTimer = setInterval(tick, every * 60 * 1000);
   setTimeout(tick, 15_000); // shortly after start-up
 }

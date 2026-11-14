@@ -6,17 +6,17 @@ import ExcelJS from "exceljs";
 import { strFromU8, unzipSync } from "fflate";
 import postgres from "postgres";
 import { shoot, signIn } from "./helpers";
+import { fileExists, putFile, removeFiles } from "./storage";
 
 // Offer → joined, Excel/CSV exports, reports, retention, rights requests, audit log and the TV session,
 // in a throwaway tenant whose rows are created here (real rows, deleted afterwards).
 const run = Date.now().toString(36);
 const sql = postgres(process.env.DATABASE_URL!);
-const UPLOAD = process.env.UPLOAD_DIR!;
 const SHOTS = process.env.SHOTS_DIR;
 const who: Record<"admin" | "hr" | "mgr" | "tv", { id: string; email: string; password: string }> = {} as never;
 const pages: Record<string, Page> = {};
 let tenantId = "";
-const people: Record<string, { candidateId: string; appId: string; mobile: string; name: string }> = {};
+const people: Record<string, { candidateId: string; appId: string; mobile: string; name: string; photo: string }> = {};
 const names = { A: `Anita P3${run}`, B: `Bharat P3${run}`, C: `Charu P3${run}`, D: `Dev P3${run}`, E: `Esha P3${run}` };
 
 test.describe.configure({ mode: "serial" });
@@ -68,10 +68,9 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
     // a photo on disk for each (access ZIP + erasure must handle real files)
     const fileId = crypto.randomUUID();
     const key = `${tenantId}/${c.id}/${fileId}.jpg`;
-    fs.mkdirSync(path.join(UPLOAD, tenantId, c.id), { recursive: true });
-    fs.writeFileSync(path.join(UPLOAD, key), Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]));
+    await putFile(key, new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])); // the server's storage (folder or S3)
     await sql`insert into candidate_files (id, tenant_id, candidate_id, application_id, kind, storage_key, mime_type, size_bytes) values (${fileId}, ${tenantId}, ${c.id}, ${a.id}, 'photo', ${key}, 'image/jpeg', 7)`;
-    people[k] = { candidateId: c.id, appId: a.id, mobile, name: names[k] };
+    people[k] = { candidateId: c.id, appId: a.id, mobile, name: names[k], photo: `${fileId}.jpg` };
   }
   for (const [key, viewport] of [["admin", { width: 1440, height: 900 }], ["hr", { width: 1366, height: 768 }], ["tv", { width: 1920, height: 1080 }]] as const) {
     pages[key] = await (await browser.newContext({ viewport, acceptDownloads: true })).newPage();
@@ -88,7 +87,7 @@ test.afterAll(async () => {
   await sql`delete from drives where tenant_id in ${sql(t)}`;
   for (const q of ["candidates", "daily_counters", "audit_log", "reject_reasons", "option_items", "privacy_notices", "users", "jobs", "stages", "locations"]) await sql`delete from ${sql(q)} where tenant_id in ${sql(t)}`;
   await sql`delete from tenants where id = ${tenantId}`;
-  fs.rmSync(path.join(UPLOAD, tenantId), { recursive: true, force: true });
+  await removeFiles(`${tenantId}/`);
   await sql.end();
 });
 
@@ -216,7 +215,7 @@ test("rights requests: access ZIP and erase now", async () => {
     (select count(*)::int from applications where candidate_id = ${people.D.candidateId}) as a,
     (select count(*)::int from candidate_files where candidate_id = ${people.D.candidateId}) as f`;
   expect(left).toEqual({ c: 0, a: 0, f: 0 });
-  expect(fs.existsSync(path.join(UPLOAD, tenantId, people.D.candidateId))).toBe(false);
+  expect(await fileExists(`${tenantId}/${people.D.candidateId}/${people.D.photo}`)).toBe(false); // erased from storage too
   const [r] = await sql`select status, candidate_id from dsr_requests where tenant_id = ${tenantId} and kind = 'erasure'`;
   expect(r).toEqual({ status: "completed", candidate_id: null });
   const [log] = await sql`select meta from audit_log where tenant_id = ${tenantId} and action = 'candidate.erase'`;

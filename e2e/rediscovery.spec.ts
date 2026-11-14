@@ -1,15 +1,14 @@
 import fs from "node:fs";
-import path from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { hashPassword } from "better-auth/crypto";
 import ExcelJS from "exceljs";
 import postgres from "postgres";
 import { shoot, signIn } from "./helpers";
+import { removeFiles } from "./storage";
 
 // Phase 3.6 (docs/REDISCOVERY.md): candidate 360 + rediscovery, in a throwaway tenant whose rows are made here.
 const run = Date.now().toString(36);
 const sql = postgres(process.env.DATABASE_URL!);
-const UPLOAD = process.env.UPLOAD_DIR!;
 type Who = { id: string; email: string; password: string; name: string };
 const who: Record<"admin" | "hr" | "mgr" | "iv", Who> = {} as never;
 const pages: Record<string, Page> = {};
@@ -85,7 +84,7 @@ test.afterAll(async () => {
   // Phase 3.6 tables cascade with candidates / tenant
   for (const q of ["candidates", "daily_counters", "audit_log", "reject_reasons", "option_items", "privacy_notices", "users", "jobs", "stages", "locations"]) await sql`delete from ${sql(q)} where tenant_id in ${sql(t)}`;
   await sql`delete from tenants where id = ${tenantId}`;
-  fs.rmSync(path.join(UPLOAD, tenantId), { recursive: true, force: true });
+  await removeFiles(`${tenantId}/`);
   await sql.end();
 });
 

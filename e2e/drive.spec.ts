@@ -1,5 +1,5 @@
-import fs from "node:fs";
 import path from "node:path";
+import { removeFiles } from "./storage";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { hashPassword } from "better-auth/crypto";
 import postgres from "postgres";
@@ -69,8 +69,7 @@ test.afterAll(async () => {
   await sql`delete from drives where tenant_id in ${sql(t)}`;
   for (const q of ["candidates", "daily_counters", "audit_log", "reject_reasons", "option_items", "privacy_notices", "users", "jobs", "stages", "locations"]) await sql`delete from ${sql(q)} where tenant_id in ${sql(t)}`;
   await sql`delete from tenants where id = ${tenantId}`;
-  const up = process.env.UPLOAD_DIR;
-  if (up && path.isAbsolute(up)) fs.rmSync(path.join(up, tenantId), { recursive: true, force: true });
+  await removeFiles(`${tenantId}/`);
   void cands;
   await sql.end();
 });

@@ -4,13 +4,11 @@
 //                        demo-admin@demo.example.test) with the password you put in .env as DEMO_ADMIN_PASSWORD.
 //   npm run demo:clear   removes that tenant and everything in it (rows and files).
 // It never touches any other tenant. Refuses to run when NODE_ENV=production.
-import fs from "node:fs";
-import path from "node:path";
 import { eq, inArray } from "drizzle-orm";
 import { db, pgClient } from "@/db";
 import * as s from "@/db/schema";
 import { searchTextFor } from "@/lib/candidate-search";
-import { uploadRoot } from "@/lib/files";
+import { storage } from "@/lib/storage";
 import { todayIST } from "@/lib/ist";
 import { activeLabels } from "@/lib/lists";
 import { ensureListDefaults, getOptionLists } from "@/lib/lists-db";
@@ -36,8 +34,9 @@ async function clear() {
   await db.delete(s.users).where(inArray(s.users.tenantId, ids)); // sessions + accounts cascade
   for (const table of [s.rejectReasons, s.jobs, s.stages, s.locations]) await db.delete(table).where(inArray(table.tenantId, ids));
   await db.delete(s.tenants).where(eq(s.tenants.id, t.id));
-  const root = uploadRoot();
-  if (root) fs.rmSync(path.join(root, t.id), { recursive: true, force: true });
+  const keys: string[] = [];
+  for await (const o of storage().list(`${t.id}/`)) keys.push(o.key);
+  await storage().delete(keys); // the demo tenant has no files today; this keeps clear complete if it ever gets some
   console.log("demo tenant and all its data removed");
 }
 

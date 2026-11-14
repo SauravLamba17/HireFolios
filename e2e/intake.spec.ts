@@ -1,9 +1,8 @@
-import fs from "node:fs";
-import path from "node:path";
 import { expect, test, type Browser, type Locator, type Page } from "@playwright/test";
 import { strToU8, zipSync } from "fflate";
 import postgres from "postgres";
 import { shoot, signIn } from "./helpers";
+import { removeFiles } from "./storage";
 
 // Runs against the seeded tenant with two fake webcams (see playwright.config.ts).
 // Everything it creates (staff, candidates, files, a job) is deleted afterwards.
@@ -41,13 +40,12 @@ test.afterEach(async ({}, info) => {
 
 test.afterAll(async () => {
   const ids = (await sql<{ id: string; tenant_id: string }[]>`select id, tenant_id from candidates where mobile in (${mobile}, ${lanMobile})`);
-  const uploads = process.env.UPLOAD_DIR;
   for (const c of ids) {
     await sql`delete from candidate_files where candidate_id = ${c.id}`;
     await sql`delete from consents where candidate_id = ${c.id}`;
     await sql`delete from applications where candidate_id = ${c.id}`;
     await sql`delete from candidates where id = ${c.id}`;
-    if (uploads && path.isAbsolute(uploads)) fs.rmSync(path.join(uploads, c.tenant_id, c.id), { recursive: true, force: true });
+    await removeFiles(`${c.tenant_id}/${c.id}/`); // the server's storage (folder or S3)
   }
   await sql`delete from jobs where title = ${jobTitle}`;
   await sql`delete from users where email = ${hr.email}`;

@@ -1,5 +1,5 @@
-import fs from "node:fs";
 import path from "node:path";
+import { removeFiles } from "./storage";
 import { expect, test, type Page } from "@playwright/test";
 import ExcelJS from "exceljs";
 import postgres from "postgres";
@@ -47,7 +47,7 @@ test.afterAll(async () => {
     await sql`delete from consents where candidate_id = ${c.id}`;
     await sql`delete from applications where candidate_id = ${c.id}`;
     await sql`delete from candidates where id = ${c.id}`;
-    if (up && path.isAbsolute(up)) fs.rmSync(path.join(up, tenantId, c.id), { recursive: true, force: true });
+    await removeFiles(`${tenantId}/${c.id}/`);
   }
   // lists: names back, items back in use, added items removed
   await sql`update option_items set label = 'CPC' where tenant_id = ${tenantId} and list = 'certification' and label = ${`CPC (AAPC) ${run}`}`;
@@ -61,7 +61,8 @@ test.afterAll(async () => {
   }
   // company profile and logo
   const [now] = await sql`select logo_key from tenants where id = ${tenantId}`;
-  if (now?.logo_key && now.logo_key !== before.company.logo_key && up) fs.rmSync(path.join(up, now.logo_key), { force: true });
+  if (now?.logo_key && now.logo_key !== before.company.logo_key) await removeFiles(now.logo_key);
+  void up;
   const c = before.company as { name: string; short_name: string | null; token_prefix: string; office_address: string | null; logo_key: string | null; logo_type: string | null; profile_sample: boolean };
   await sql`update tenants set name = ${c.name}, short_name = ${c.short_name}, token_prefix = ${c.token_prefix}, office_address = ${c.office_address}, logo_key = ${c.logo_key}, logo_type = ${c.logo_type}, profile_sample = ${c.profile_sample} where id = ${tenantId}`;
   if (otherTenant.id) {
