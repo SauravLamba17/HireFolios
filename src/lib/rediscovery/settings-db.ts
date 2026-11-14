@@ -22,7 +22,7 @@ export async function ensureSettingDefaults(tenantId: string, q: Q = db) {
 
 async function load(tenantId: string, q: Q): Promise<SettingsWithSample> {
   let rows = await q.select().from(tenantSettings).where(eq(tenantSettings.tenantId, tenantId));
-  if (rows.length < SETTING_KEYS.length) {
+  if (rows.filter((r) => (SETTING_KEYS as string[]).includes(r.key)).length < SETTING_KEYS.length) {
     await ensureSettingDefaults(tenantId, q);
     rows = await q.select().from(tenantSettings).where(eq(tenantSettings.tenantId, tenantId));
   }
