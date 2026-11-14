@@ -1,0 +1,92 @@
+# One AWS server (Lightsail instance or EC2) for Hirefolios: the app + Caddy (HTTPS from Let's Encrypt for the real
+# domain). The database is managed PostgreSQL 16 (Lightsail database or RDS) and files are in S3: nothing important
+# lives on this server's disk. docs/DEPLOY-AWS.md walks through it.
+#
+#   cd /opt/hirefolios
+#   docker compose -f docker-compose.aws.yml --env-file hirefolios.env up -d
+#
+# hirefolios.env (from env.aws.example) holds every setting; it stays on the server (chmod 600) or comes from AWS SSM
+# Parameter Store, never from git or the image.
+#
+# Testing on one PC without AWS: add `--profile local-test`. That starts a throwaway PostgreSQL 16 standing in for the
+# managed database and an S3-compatible server (Versity Gateway) standing in for S3, and Caddy uses its own local test
+# certificate (TLS_MODE=internal). Never use that profile on the real server.
+
+services:
+  app:
+    image: hirefolios:${HIREFOLIOS_VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    restart: unless-stopped
+    env_file: ${HIREFOLIOS_ENV_FILE:-hirefolios.env}
+    environment:
+      # inside the container; everything else comes from the env file
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+      LOG_FORMAT: json
+    expose:
+      - "3000" # only Caddy reaches the app; nothing is published to the internet but 80/443
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m # backups are written here briefly before upload
+      - /app/.next/cache:size=64m # Next.js cache (the image itself stays read-only)
+    volumes:
+      - ./rds-ca.pem:/app/certs/rds-ca.pem:ro # the database CA bundle for DB_SSL=verify-full (docs/DEPLOY-AWS.md)
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  caddy:
+    image: caddy:2.11.9-alpine # same Caddy as deploy/windows/versions.json
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?set PUBLIC_DOMAIN, e.g. simplen.hirefolios.in}
+      TLS_MODE: ${TLS_MODE:?set TLS_MODE to the email for Let's Encrypt notices (or internal for a local test)}
+    volumes:
+      - ./Caddyfile.aws:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # certificates: keep this volume, or Let's Encrypt limits can block new ones
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  # ---- local-test profile only: stand-ins for the managed database and S3 ----
+  postgres:
+    profiles: [local-test]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: hirefolios
+      POSTGRES_USER: hirefolios
+      POSTGRES_PASSWORD: ${LOCAL_TEST_DB_PASSWORD:?set LOCAL_TEST_DB_PASSWORD for the local-test profile}
+    volumes:
+      - pg_test:/var/lib/postgresql/data
+
+  s3:
+    profiles: [local-test]
+    image: versity/versitygw:v1.11.0
+    environment:
+      ROOT_ACCESS_KEY: ${AWS_ACCESS_KEY_ID:?}
+      ROOT_SECRET_KEY: ${AWS_SECRET_ACCESS_KEY:?}
+    # region must match S3_REGION (the gateway refuses other regions); the posix backend keeps a bucket as a folder in
+    # /data, so create S3_BUCKET and BACKUP_BUCKET once (e.g. with the AWS CLI against http://s3:7070 from the app network)
+    command: ["--port", ":7070", "--region", "ap-south-1", "posix", "/data"]
+    volumes:
+      - s3_test:/data
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pg_test:
+  s3_test:

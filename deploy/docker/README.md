@@ -1,9 +1,19 @@
-# Docker deployment (optional, not used for Simplen)
+# Docker deployment (AWS)
 
-These files are kept for a possible future cloud / SaaS setup. **Simplen runs the native Windows
-install** in `deploy/windows/` (see `docs/INSTALL.md`). Nothing here is maintained or tested: the
-Docker setup was written in Phase 3 and never run, and it is not kept in step with the app.
+**Supported (Phase 5):** `Dockerfile`, `docker-compose.aws.yml`, `Caddyfile.aws` and `env.aws.example`. These run
+Hirefolios on one AWS server with managed PostgreSQL 16 and S3. Follow `docs/DEPLOY-AWS.md`. Simplen's office PC
+still uses the native Windows install in `deploy/windows/` (`docs/INSTALL.md`). Docker is not used there.
 
-If it is picked up again, start from here: `cd deploy/docker`, copy `.env.production.example` to
-`.env.production`, then `docker compose --env-file .env.production up -d --build`. The build context
-is the repository root (`Dockerfile.dockerignore` keeps `.env` and `data/` out of the image).
+**Superseded (Phase 3, never run, kept for reference only):** `docker-compose.yml`, `Caddyfile.internal`,
+`Caddyfile.cloudflare`, `caddy/`, `backup.sh` / `backup.ps1`, `restore.sh` / `restore.ps1`. They predate S3 storage, the
+migration lock and the S3 backups. Do not use them for a new install.
+
+The build context is the repository root, and `Dockerfile.dockerignore` keeps `.env`, `data/` and other local files out
+of the image:
+
+```bash
+docker build -f deploy/docker/Dockerfile -t hirefolios:<version> .
+```
+
+**Status:** the image and compose file were written and linted but have **not been built or run** yet (no Docker on
+the development PC). The first build is part of `docs/DEPLOY-AWS.md` section 15.

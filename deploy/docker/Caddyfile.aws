@@ -1,0 +1,35 @@
+# Caddy in front of Hirefolios on AWS (docker-compose.aws.yml). HTTPS for PUBLIC_DOMAIN:
+#   TLS_MODE=<your email>  → a real certificate from Let's Encrypt (renewed automatically; ports 80 and 443 must be open)
+#   TLS_MODE=internal      → Caddy's own local test certificate (testing without a domain)
+# Caddy replaces any X-Forwarded-For the client sent with the real address (the app's sign-in limits and the office
+# IP allow-list rely on it) and sets X-Forwarded-Proto / Host. The app adds the security headers itself.
+
+{$PUBLIC_DOMAIN} {
+	tls {$TLS_MODE}
+	encode zstd gzip
+	request_body {
+		max_size 64MB # intake: photo + CV pages + CV files (MAX_UPLOAD_MB × MAX_CV_FILES and pages)
+	}
+	reverse_proxy {$APP_UPSTREAM:app:3000} {
+		# Server-Sent Events (live drive board): no buffering
+		flush_interval -1
+		transport http {
+			read_timeout 2m
+			write_timeout 2m
+		}
+	}
+	log {
+		output stdout
+		# JSON lines; no query strings (quick-look searches carry names / mobiles), cookies or auth headers
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp "[?].*$" "?…"
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				resp_headers>Set-Cookie delete
+				resp_headers>Location regexp "[?].*$" "?…"
+			}
+		}
+	}
+}
