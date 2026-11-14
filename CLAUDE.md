@@ -6,7 +6,8 @@ or webcam photos of a paper CV); HR turns the screen and the candidate only read
 taps consent. Interviewers, managers and the lobby TV use other office PCs in a browser.
 Standalone (not part of SESS). Runs natively on one Windows 10/11 office PC as three Windows services
 (PostgreSQL 16, the app's Node.js standalone server via WinSW, Caddy for HTTPS) at
-https://simplen.hirefolios.in; later sold to other companies as SaaS. No Docker for Simplen.
+https://simplen.hirefolios.in; later sold to other companies as SaaS. No Docker for Simplen's office PC. Since Phase 5 the
+same app can also run on AWS Mumbai (container + managed PostgreSQL + S3, `docs/DEPLOY-AWS.md`); both installs must keep working.
 
 Read `PROGRESS.md` first and continue from where it stops.
 
@@ -14,7 +15,7 @@ Read `PROGRESS.md` first and continue from where it stops.
 
 1. **No paid APIs.** No AI, SMS, WhatsApp API, OCR or hosted auth services. Everything runs on the office PC.
 2. **Tenant isolation.** Every business table has `tenant_id`. Every query filters on the signed-in staff member's `tenantId`, server-side. Never take a tenant id from the client.
-3. **Files are never public.** Photos and CV pages live under `UPLOAD_DIR` (an absolute path; in dev the gitignored `/data/uploads`), outside `public/`, and are served only through `GET /api/files/[id]`, which checks the signed-in staff member's tenant.
+3. **Files are never public.** Photos and CV pages live in the storage driver (`src/lib/storage.ts`): `UPLOAD_DIR` (an absolute path; in dev the gitignored `/data/uploads`, outside `public/`) or a private S3 bucket (Block Public Access), keys `<tenant>/<candidate>/…`. They are served only through `GET /api/files/[id]`, which checks the signed-in staff member's tenant (then streams, or redirects to a short-lived signed URL when `S3_SIGNED_URLS=on`). Never read or write files with `fs` directly.
 4. **Consent before camera.** No photo or CV page may be captured until a `consents` row exists for that candidate.
 5. **No Aadhaar at intake.** Do not add an Aadhaar field, photo or OCR anywhere in intake.
 6. **Under-18 blocked.** Intake refuses candidates younger than 18 (age computed on the IST calendar date).
@@ -37,8 +38,8 @@ Read `PROGRESS.md` first and continue from where it stops.
 | `src/db/schema.ts` | Drizzle schema (all tables, enums) |
 | `drizzle/` | SQL migrations (`0000` enables pg_trgm) |
 | `src/db/seed-core.ts` | Idempotent `seed()`: tenant, stages, jobs, sample location, first admin (`seed.ts` is the CLI) |
-| `src/lib/auth.ts` | Better Auth (email + password, sign-up disabled; session length per role from `session-length.ts`: 12 h staff, 30 days display) |
-| `src/lib/session.ts` | `ROLES` permission map, `getStaff`, `requireStaff` (pages), `requireStaffApi` (APIs) |
+| `src/lib/auth.ts` | Better Auth (email + password, sign-up disabled; session length per role from `session-length.ts`: 12 h staff, 30 days display; `twoFactor` plugin (TOTP + recovery codes); sign-in limit per IP `SIGN_IN_LIMIT` in the database; account lockout `LOCKOUT_ATTEMPTS` / `LOCKOUT_MINUTES` and the allow-list in its sign-in hooks, audited) |
+| `src/lib/session.ts` | `ROLES` permission map, `getStaff`, `requireStaff` (pages), `requireStaffApi` (APIs); also two-factor required for `TWO_FACTOR_REQUIRED_ROLES`, the per-person API limit and the display role's allow-list check |
 | `src/lib/origin.ts` | Origin the request was sent to (LAN IP, localhost); used for CSRF checks |
 | `src/lib/staff.ts` | `createStaff`, `setTemporaryPassword` (admin reset), `audit` |
 | `src/lib/options.ts` | **Seed source only**: the starting pick-lists, reject reasons, sample criteria; plus code labels for enum values (outcomes, decisions) |
@@ -50,7 +51,16 @@ Read `PROGRESS.md` first and continue from where it stops.
 | `src/lib/runtime-check.ts`, `deploy/windows/versions.json` | Pinned Node.js / PostgreSQL majors (+ Caddy, WinSW): the app refuses others; install / update / package / `engines` follow the same file |
 | `src/lib/browser.ts`, `src/components/browser-notice.tsx` | "Please use Chrome or Edge" banner for other browsers |
 | `src/lib/money.ts` | LPA ↔ whole rupees per year |
-| `src/lib/files.ts` | Candidate files under `UPLOAD_DIR` (absolute path), type sniffing |
+| `src/lib/files.ts` | Candidate file names / keys, type sniffing |
+| `src/lib/storage.ts` | File storage: one interface (put / get / stream / delete / list / signedUrl / check), `LocalStorage` (`UPLOAD_DIR`) and `S3Storage` (AWS SDK v3, SSE, path-style for test servers); `storage()` picks `STORAGE_DRIVER` |
+| `src/db/options.ts` | postgres.js options from env: pool `DB_POOL_MAX`, TLS `DB_SSL` (disable / require / verify-full + `DB_SSL_CA_FILE`) |
+| `src/lib/backup.ts`, `scripts/backup-s3.ts` | Nightly `pg_dump` → AES-256-GCM → `BACKUP_BUCKET` (`daily/`, `monthly/`, `status/`), restore with checksum check, scheduler under an advisory lock |
+| `scripts/migrate-files-to-s3.ts` | `npm run files:to-s3 [-- --apply]`: local uploads → S3, dry run first, read-back SHA-256 check |
+| `scripts/build-tools.mjs` | postbuild: bundles the two scripts above into `standalone/tools/*.js` (container + release) |
+| `src/lib/net.ts`, `src/lib/security-settings.ts` | Client IP (last `X-Forwarded-For` entry, set by Caddy), office IP allow-list (Settings → Security), in-memory API rate limiter |
+| `src/middleware.ts` | Security headers: nonce CSP, HSTS behind HTTPS, frame-ancestors none, referrer, permissions policy |
+| `src/lib/log.ts` | Server log lines (`LOG_FORMAT` text / json), ids and codes only |
+| `src/app/(staff)/account/security/`, `src/app/(staff)/dashboard/settings/security/`, `src/app/not-allowed/` | Two-factor setup / recovery codes / sign out everywhere; allow-list settings; the "not from this network" page |
 | `src/lib/candidate-search.ts` | Candidate list: URL filters, WHERE builder (tenant first), `search_text` for full-text |
 | `src/lib/flow.ts` | Stage / outcome rules (pure, unit-tested): next round, Selected, hold, reject, offer / joined, purge dates, assign-next order, wait estimate |
 | `src/lib/drive.ts` | Drive day: today's drive, board state, panels, assign, decisions, overrides, `recordOffer`, `markJoined` (one transaction each) |
@@ -67,8 +77,8 @@ Read `PROGRESS.md` first and continue from where it stops.
 | `src/components/quick-look.tsx`, `rediscovery.tsx`, `contact.tsx`, `person-contact.tsx`, `reject-fields.tsx` | Header quick-look, tags / suggestions, contact / call-back / consent / do-not-contact controls, reject category + cost fields |
 | `scripts/perf-rediscovery.ts` | 10,000-candidate timing of quick-look, pool, bulk list (throwaway tenant, deleted after) |
 | `src/lib/audit-query.ts` | Audit viewer filters (`dashboard/audit`, CSV at `api/audit/export`) |
-| `src/lib/health.ts`, `src/app/api/health/` | Server status (DB, free disk, last backup, version), no auth, no personal data; admin status card |
-| `src/instrumentation.ts` → `src/instrumentation-node.ts` | Start-up (Node runtime only; keep `instrumentation.ts` import-free, it is also compiled for edge): migrations (`RUN_MIGRATIONS=1`), seed (`SEED_ON_START=1`), deletion job (unless `PURGE_JOB=off`) |
+| `src/lib/health.ts`, `src/app/api/health/` | Server status (DB, file storage, free disk, last backup (S3 status file when `BACKUP_BUCKET` is set), version), no auth, no personal data, 503 when unhealthy; admin status card |
+| `src/instrumentation.ts` → `src/instrumentation-node.ts` | Start-up (Node runtime only; keep `instrumentation.ts` import-free, it is also compiled for edge): migrations (`RUN_MIGRATIONS=1`), seed (`SEED_ON_START=1`), deletion job (unless `PURGE_JOB=off`); migrations + seed under a PostgreSQL advisory lock (several instances), pg_trgm check, nightly S3 backup when `BACKUP_BUCKET` is set |
 | `src/lib/live.ts`, `src/app/api/live/` | Server-Sent Events: per-tenant "change" pings only (no data); pages re-read their own state |
 | `src/lib/access.ts` | Interviewers see only candidates they were called to interview (pages and files) |
 | `src/lib/api.ts` | `act()`: transaction + live ping + rule errors as 400/404 |
@@ -84,7 +94,8 @@ Read `PROGRESS.md` first and continue from where it stops.
 | `e2e/` | Playwright tests (two fake webcams, desk sizes 1440 / 1366x768 / 1024); `manual-intake.spec.ts` = hard rule 13 |
 | `scripts/package.mjs` | `npm run package [-- --version X]`: `release/hirefolios-<version>/` + `.zip` (standalone app, static, migrations, bundled `node.exe`, `VERSION.txt` + `release.env`, scripts, pinned tools, docs; no source, no `.env`, scans for this PC's secrets) |
 | `deploy/windows/` | Office PC: `install.ps1`, `update.ps1` (auto rollback), `backup.ps1`, `restore.ps1`, `uninstall.ps1`, `trust-certificate.ps1` + `set-hosts.ps1` (each office PC), `common.ps1` (shared helpers, **pinned WinSW + Caddy versions and SHA-256**), Caddyfile templates (B: `tls internal`, A: Cloudflare DNS), WinSW service XML, `PSScriptAnalyzerSettings.psd1` |
-| `deploy/docker/` | Optional, for future cloud / SaaS only. Not used for Simplen, not maintained or tested |
+| `deploy/docker/` | AWS (Phase 5): `Dockerfile` (non-root, healthcheck), `docker-compose.aws.yml` (app + Caddy; `local-test` profile), `Caddyfile.aws`, `env.aws.example`. The older Phase 3 files there are superseded (README) |
+| `docs/DEPLOY-AWS.md` | AWS guide: Lightsail (A) or EC2 + RDS (B), IAM policy, buckets + lifecycle, backups, alarms, costs, go-live checklist |
 | `docs/INSTALL.md`, `docs/FIRST-DRIVE-CHECKLIST.md` | Office PC install guide (non-developer), first drive day checklist |
 
 ## Patterns
@@ -117,7 +128,7 @@ Read `PROGRESS.md` first and continue from where it stops.
 - The lobby TV (`display` role) must never receive names, photos or mobiles.
 - Offers and joining only through `recordOffer` / `markJoined` (drive.ts), rules in `offerOutcome` / `canMarkJoined` (flow.ts).
 - Deleting candidate data only through `purge.ts` / `privacy.ts`: never joined, talent-pool or recently-visited candidates
-  (`candidateErasable` in retention.ts). Unlink files only after the transaction commits.
+  (`candidateErasable` in retention.ts). Delete files (`storage().delete(keys)`) only after the transaction commits.
 - Exports write an `exports` row and an `export.download` audit entry (kind + row count only).
 - Report figures come from real rows with an "as of" time; never sample numbers in the UI.
 - Rediscovery (Phase 3.6): rules use list item **codes** (`option_items.code`), never labels. Every automatic label is a
@@ -125,6 +136,10 @@ Read `PROGRESS.md` first and continue from where it stops.
   cost figures, other offers, risk hints) needs the `rediscovery` permission and never reaches the consent screen, the TV or
   interviewers (except the hiring summary of a candidate they interviewed). Tags never keep data; talent-pool consent does,
   for `talent_pool_keep_months`. New Phase 3.6 tables cascade with their tenant and candidate.
+- Files: only through `storage()` (`src/lib/storage.ts`), so local and S3 behave the same; tests use `e2e/storage.ts`.
+- Client address: only `clientIp(headers)` (`src/lib/net.ts`). Security events (`auth.sign_in_failed`, `auth.lockout`,
+  `auth.ip_blocked`, `user.two_factor_reset`, `user.unlock`, `security.allowlist`) are audited with ids / counts only.
+- Server logs: `log.info/warn/error(event, fields)` (`src/lib/log.ts`) with ids and codes, never personal data.
 - Rediscovery writes go through `src/lib/rediscovery/actions.ts` inside `act()`; thresholds come from `getSettings(tenantId)`.
 
 ## Commands
@@ -149,6 +164,10 @@ npm run db:generate -- --name=<change>   # after editing schema.ts
 npm run demo:seed             # sample data in a separate demo tenant (needs DEMO_ADMIN_PASSWORD in .env); demo:clear removes it
 npm run lint:ps               # PowerShell scripts (run after editing deploy/windows or scripts/*.ps1)
 
+npm run files:to-s3           # dry run; -- --apply copies uploads to S3 with checksums (docs/DEPLOY-AWS.md section 13)
+npm run backup:s3             # encrypted pg_dump to BACKUP_BUCKET now; -- --list; -- --restore latest --yes
+
+# Production on AWS: docs/DEPLOY-AWS.md (docker compose -f deploy/docker/docker-compose.aws.yml)
 # Production (office PC, Windows, see docs/INSTALL.md)
 npm run package               # -> release/hirefolios-<version>/ and .zip (copy to the office PC)
 # on the office PC, PowerShell as Administrator, in the unpacked release folder:

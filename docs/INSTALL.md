@@ -1,5 +1,9 @@
 # Installing Hirefolios on the office PC (Windows)
 
+> **Two ways to run Hirefolios.** This guide covers the **office PC** (the office network only, everything on one Windows
+> PC). To run it on **AWS** (Mumbai, reachable over the internet with HTTPS, managed database, files in S3) follow
+> [DEPLOY-AWS.md](DEPLOY-AWS.md) instead. Both run the same program.
+
 This guide is for the person who looks after the office computers. You do not need to be a
 developer. Follow the steps in order; each step says how to check it worked.
 
@@ -321,6 +325,13 @@ or `.err.log`) names the variable, for example `UPLOAD_DIR must be an absolute f
 | `OFFICE_HOURS` | The deletion job waits outside these hours, e.g. `09:00-19:00` | any time |
 | `RUN_MIGRATIONS`, `MIGRATIONS_DIR`, `SEED_ON_START` | Start-up database set-up (installer) | 1, app folder, 0 |
 | `PG_BIN`, `PG_SERVICE`, `PG_SUPERUSER_PASSWORD`, `APP_DOMAIN`, `HTTPS_OPTION`, `CLOUDFLARE_API_TOKEN` | Used by the install / backup / update scripts | written by the installer |
+| `TWO_FACTOR_REQUIRED_ROLES` | Roles that must use two-factor sign-in (authenticator app), e.g. `admin,hr` | none (optional for all) |
+| `SIGN_IN_LIMIT` | Sign-in attempts per address (attempts/seconds); the whole office shares one address | 20/60 |
+| `LOCKOUT_ATTEMPTS`, `LOCKOUT_MINUTES` | Wrong passwords before an account is locked, and for how long (admins can unlock on the Users page) | 5, 15 |
+| `API_RATE_LIMIT_PER_MINUTE` | Requests per signed-in person per minute | 600 |
+| `IP_ALLOWLIST_OFF` | `1` ignores the office IP allow-list (Settings → Security) if it locked everyone out | 0 |
+| `LOG_FORMAT` | Log lines as `text` or `json` | text |
+| `STORAGE_DRIVER`, `S3_*`, `DB_SSL`, `DB_SSL_CA_FILE`, `DB_POOL_MAX`, `BACKUP_BUCKET`, `BACKUP_ENCRYPTION_KEY`, `BACKUP_TIME`, `PG_DUMP_PATH`, `PG_RESTORE_PATH` | For the AWS install only ([DEPLOY-AWS.md](DEPLOY-AWS.md) section 12); the office PC keeps the defaults (`local`, `disable`) | local, disable, 10 |
 
 Pinned versions (Node.js 24, PostgreSQL 16, Caddy, WinSW) live in `scripts\versions.json`; Hirefolios refuses to
 start on another Node.js or PostgreSQL major version and says which one it needs.

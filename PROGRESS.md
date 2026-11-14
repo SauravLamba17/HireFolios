@@ -1,6 +1,8 @@
 # Progress
 
-Phase 3.6 is complete (2026-11-13): candidate 360 + rediscovery (hiring summary, quick-look, tags and suggestions, contact
+Phase 5 is complete (2026-11-14): AWS-ready (S3 or local file storage, managed PostgreSQL over TLS, container + compose,
+two-factor sign-in, lockout, limits, IP allow-list, security headers, encrypted S3 backups, docs/DEPLOY-AWS.md); not deployed.
+Phase 3.6 (2026-11-13): candidate 360 + rediscovery (hiring summary, quick-look, tags and suggestions, contact
 etiquette, call-backs, consent after the visit, pool, bulk hiring lists, pushes, joining-risk hints, reports).
 Phase 3.5 (2026-11-12): lists, privacy notice and company profile in the database with Settings screens,
 configuration checked at start-up, a permanent dev PostgreSQL 16, pinned versions and an office machine check.
@@ -485,6 +487,106 @@ Phase 3 (2026-11-11): native Windows install, no Docker for Simplen. Phase 4 is 
 | 3 | `Admin` button selector also matched the account menu of an admin ("…, Admin: account menu") | none (test) | exact names |
 | 4 | Tab pressed on a just-opened menu's button (before focus reached the first item) left the menu open | minor (a11y) | menu closes whenever focus leaves the button and its items |
 
+## Phase 5 — AWS-ready (no deploy yet) ✅ (2026-11-14, guide: docs/DEPLOY-AWS.md)
+
+The same app now runs either on the office PC (unchanged: `STORAGE_DRIVER=local`, `DB_SSL=disable`, two-factor optional) or on
+AWS Mumbai (container + managed PostgreSQL 16 + private S3). No AWS account was used: S3 was tested against Versity Gateway
+1.11.0 (S3-compatible, run locally; MinIO's downloads were gone), the managed database against local PostgreSQL 16 clusters
+(one with TLS and a throwaway CA).
+
+- [x] **Storage** — `src/lib/storage.ts` (local + S3 drivers: put / get / stream / delete / list / signed URLs / check); keys
+      `<tenant>/<candidate>/<file>`; SSE-S3 by default; files streamed after login + tenant checks, or (opt-in
+      `S3_SIGNED_URLS=on`) a 10–900 s signed link; intake rolls back stored files on failure and answers 503 with a clear
+      message when storage is unreachable; deletion job, rights ZIP, exports, logo and demo data through `storage()`;
+      `npm run files:to-s3` (dry run → `--apply`, read-back SHA-256, re-runnable)
+- [x] **Database** — `DB_SSL` disable / require / verify-full (+ CA file), `DB_POOL_MAX` (10), migrations + seed under an
+      advisory lock, pg_trgm check, `db:check` reports TLS and pool vs `max_connections`
+- [x] **Container** — supported `deploy/docker/Dockerfile` (non-root, healthcheck, pg_dump 16, tools bundled) and
+      `docker-compose.aws.yml` (app read-only + Caddy 2.11.9 / Let's Encrypt; `local-test` profile); JSON logs (`LOG_FORMAT`)
+- [x] **Security** — two-factor sign-in (TOTP + 10 recovery codes; required for `TWO_FACTOR_REQUIRED_ROLES`, `admin,hr` on AWS;
+      admin reset), sign-in limit per address (`SIGN_IN_LIMIT` 20/60, stored in the database), account lockout (5 wrong
+      passwords → 15 min, from any address, audited, admin unlock), API limit per person (600/min), optional office IP
+      allow-list with the TV limited to it, nonce CSP + HSTS + frame-ancestors none + referrer / permissions policies, secure
+      cookies behind HTTPS, password change / admin reset / "sign out everywhere" end other sessions; migration `0007_security`
+- [x] **Backups** — nightly `pg_dump` → AES-256-GCM → `BACKUP_BUCKET` (`daily/`, `monthly/`, `status/`), restore with checksum
+      check (`npm run backup:s3 -- --restore latest --yes`); lifecycle 30 daily / 12 monthly and uploads versioning in the guide
+- [x] **Health** — `/api/health` + status card: database, storage, disk, last backup (S3 status), 503 when unhealthy
+- [x] **Docs** — `docs/DEPLOY-AWS.md` (Lightsail / EC2 + RDS, IAM policy, buckets, SSM, backups, alarms, updates, rollback,
+      costs to verify, go-live checklist, SESS separate); INSTALL.md "two ways"; CLAUDE.md; `deploy/docker/README.md`
+
+### Verification (Phase 5, dev PC, 2026-11-14)
+
+| Check | Local storage | S3 (Versity Gateway) |
+|---|---|---|
+| `tsc`, `eslint`, `npm run lint:ps` (11 scripts) | clean | — |
+| vitest | **223/223** (11 new in `phase5.test.ts`) | — |
+| `npm run smoke` (production build) | **166/166** | **166/166**; fresh stack with signed links **168/168** |
+| Playwright full suite (Chrome, production build) | **52 passed, 3 skipped** (final build; LAN test + two that need their own server) | first run **52 passed, 2 skipped**; final build: 48 passed + `intake.spec` "full PC intake" failing at the webcam in 3 of 5 runs (known issue below); the rest of `intake.spec` **6/6** in separate S3 runs |
+| `e2e/security.spec.ts` direct to the app | 7 passed, 1 skipped (required 2FA: own run) | — |
+| `e2e/security.spec.ts` through Caddy HTTPS (`tls internal`) | — | **7 passed**, 2 skipped (need address spoofing / own run); required two-factor run **1/1** |
+| `npm run db:check` | 5/5 PASS + INFO (no TLS on this PC) | TLS: require PASS, verify-full PASS, wrong CA refused |
+| `npm run dev:check` | **24 pages**, no build errors | — |
+| `npm run package` | `release/hirefolios-0.1.0` + zip (70 MB), 2,429 files incl. `app/tools/*.js`, no source / env files, 4 secrets checked | — |
+
+- **Fresh deploy from zero** (empty database on a TLS cluster, `DB_SSL=verify-full`, S3, only the documented settings): two
+  instances started at the same moment → one set of 8 migrations, one tenant, one admin, 7 stages; all 15 connections TLS
+- **Backup → wipe → restore**: the server's scheduler made the nightly backup by itself (with the monthly copy); a restore into
+  two scratch databases matched (35/35 tables); after dropping everything, the restore brought back 35/35 tables with the same
+  counts and `db:check` passed on it; without `--yes` it refuses; a wrong key is refused before `pg_restore`
+- **Files migration**: dry run 5 files → `--apply` 5 copied and verified by SHA-256 → re-run 0 to copy, 5 already there
+- **Signed links**: `no-store` redirect, link expires after `S3_SIGNED_URL_SECONDS` (403 after 12 s with 10 s); signed out 401,
+  another tenant 404, interviewer only for assigned candidates
+- **S3 down during intake**: health 503 "degraded"; intake shows "nothing was saved … press Save again", typed data kept, no
+  candidate / visit / file row, logged with the error code only
+- **Database restarted mid-drive**: health 503 and pages 500 while down, server stays up; back to 200 within 1 s of the
+  restart with the same session
+- **Slow upload** (2 MB at 20 KB/s, 97 s) through Caddy: received in full, no time-out
+- **Wrong passwords from 6 addresses**: account locked after 5 (audit `auth.lockout` with counts only); right password refused
+  while locked
+- **Copied session cookie** after sign-out: 401; a faked `X-Forwarded-For` behind Caddy is replaced with the real address
+- **Container**: Dockerfile + compose written, YAML parsed, Caddyfile validated with Caddy 2.11.9 (email and `internal`);
+  **not built or run** (no Docker Desktop on this PC, as agreed)
+- No test secret (S3 keys, database passwords, auth secrets) in any changed file; logs checked for keys / passwords
+
+### Issues found while testing (logged before fixing; re-tested)
+
+| # | Issue | Severity | Cause | Fix | Re-test |
+|---|---|---|---|---|---|
+| 1 | S3 test server refuses the SSE header (`NotImplemented`) | none (test server) | Versity Gateway does not do SSE | S3 runs use `S3_SSE=none`; AWS encrypts by default too; listed under "needs AWS" | — |
+| 2 | Guide's `node scripts/backup-s3.js` did not exist in the image or release | major (ops) | scripts are TypeScript run by tsx | `scripts/build-tools.mjs` (postbuild) bundles `tools/backup-s3.js` and `tools/migrate-files-to-s3.js` | both run from `.next-verify/standalone/tools` |
+| 3 | e2e sign-ins hit "Too many attempts" (3 tests) | none (test) | helper paced for Better Auth's 3/10 s; the 20/60 window only resets after a full idle minute | helper paces to `SIGN_IN_LIMIT`; dedicated 429 test added | full suite green |
+| 4 | JSON log line `backup.scheduled` showed `"time":"02:30"` instead of the timestamp | minor | a field named `time` overwrote the log time | logger puts its own fields last; field renamed `at` | log checked |
+| 5 | `backup.ts` hard-coded `Asia/Kolkata` | minor (rule 7) | new code | uses `APP_TIME_ZONE` | unit tests |
+| 6 | Wrong backup key gave "Unsupported state…" and could leave partial plaintext | minor | raw crypto error | clear message; partial output deleted | unit test checks both |
+| 7 | Fresh instances stopped: "Can't find meta/_journal.json" | none (test setup) | `.next-verify/standalone` has no `drizzle/` (release and image do; Dockerfile sets `MIGRATIONS_DIR`) | `MIGRATIONS_DIR` in the test settings | start-up refused clearly, then passed |
+| 8 | PostgreSQL NOTICEs printed as multi-line objects, breaking JSON logs | minor | postgres.js default `onnotice` | `onnotice` off in `dbOptions` | fresh start log |
+| 9 | Signed-link redirect lost `referrer-policy` (and the middleware headers) | none | Next.js keeps only some headers on a route's 302 | dead header removed; no Referer reaches S3 anyway (pages are `same-origin`) | smoke 168/168 |
+| 10 | Compose `local-test` S3 would refuse `ap-south-1` requests | major (test profile) | gateway defaults to `us-east-1` (seen locally) | `--region ap-south-1` + bucket note | YAML parsed |
+| 11 | The `## Phase 4 — next` heading of this file was lost in the header-fix commit | minor (docs) | edit slip | heading restored | — |
+| 12 | Intake 500 with a raw error when storage is unreachable; S3 calls had no time-out | major | errors passed through; SDK default has none | 503 with an HR message; connect 5 s / request 30 s; a file key is recorded before its upload so a timed-out upload is rolled back too | S3-down test |
+| 13 | Security spec sign-in got "Too many attempts" right after `npm run smoke` | none (test) | its own sign-in step had no retry | one shared `submitSignIn` (waits for the response; on 429 waits the window, presses again) | spec green after smoke |
+| 14 | `dev:check` failed "deletion job scheduled 0 times" | none (check) | it looked for the old log text | counts `retention.scheduled` | 24 pages pass |
+
+### Known issues / left open after Phase 5
+
+- Needs a real AWS account (docs/DEPLOY-AWS.md section 15): Lightsail PostgreSQL 16 + pg_trgm in Mumbai, verify-full with the
+  RDS CA bundle, SSE-S3 headers, the IAM policy being enough, lifecycle rules, instance role on EC2, Let's Encrypt, alarms
+- The container image has never been built or run (no Docker Desktop on the dev PC)
+- An S3 outage blocks intake (the photo is required) until storage is back; the health check and alarms report it
+- `npm audit`: 8 advisories, none in Phase 5 additions, all accepted for now — postcss inside Next.js (build-time CSS of our own
+  files; fix needs Next 16), uuid inside exceljs (only v3/v5/v6 with a buffer, not used that way), esbuild via drizzle-kit
+  (its dev server, not used)
+- The per-person API limit is in memory per instance (two instances each allow 600/min); sign-in limits and lockouts are in
+  the database and shared
+- Older hard-coded `Asia/Kolkata` in SQL (`purge.ts`, `rediscovery/data.ts`) and `dashboard/bulk/page.tsx` predate Phase 5
+- The Phase 3 Docker files in `deploy/docker/` are marked superseded, not deleted (ask before deleting)
+- `intake.spec` "full PC intake": Chrome's fake webcam sometimes does not start ("would not start … upload fallback") and then
+  lists no webcam at the photo step, so the picker check fails. Not deterministic (same command failed, then passed); seen in
+  3 of 5 full S3 runs and 0 of 4 local runs, also in Playwright's Chromium; passes on its own on both drivers. The camera
+  code (browser-only `getUserMedia`) is unchanged since Phase 3; cause not found. Re-check on a real webcam and in the next
+  phase's S3 runs before relying on the S3 suite as a gate
+
+## Phase 4 — next
 
 Manual entry by HR stays available at every step (CLAUDE.md hard rule 13; `e2e/manual-intake.spec.ts` must keep passing).
 Everything below is an optional helper on top of it.
