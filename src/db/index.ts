@@ -1,11 +1,14 @@
 import "server-only";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { dbOptions } from "./options";
 import * as schema from "./schema";
+
+export { dbOptions };
 
 // Reuse one pool across dev hot reloads.
 const g = globalThis as unknown as { pgClient?: postgres.Sql };
-export const pgClient = g.pgClient ?? postgres(process.env.DATABASE_URL!, { max: 10 });
+export const pgClient = g.pgClient ?? postgres(process.env.DATABASE_URL!, dbOptions());
 if (process.env.NODE_ENV !== "production") g.pgClient = pgClient;
 
 export const db = drizzle(pgClient, { schema });

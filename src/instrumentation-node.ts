@@ -9,12 +9,18 @@ import "server-only";
 import path from "node:path";
 import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
-import { db } from "@/db";
+import postgres from "postgres";
+import { db, dbOptions } from "@/db";
+import { startBackupScheduler } from "@/lib/backup";
+import { log } from "@/lib/log";
 import { brand } from "@/lib/brand";
 import { seed } from "@/db/seed-core";
 import { config, ConfigError } from "@/lib/config";
 import { startPurgeScheduler } from "@/lib/purge";
 import { nodeVersionProblem, postgresVersionProblem } from "@/lib/runtime-check";
+
+// Any fixed number shared by every instance of the app (pg_advisory_lock key for migrations + seed).
+const MIGRATION_LOCK = 7_031_965_406;
 
 function stop(message: string): never {
   console.error(`\n${brand.name} cannot start:\n${message}\n`);
@@ -47,13 +53,28 @@ try {
   }
   const pgProblem = postgresVersionProblem(versionNum);
   if (pgProblem) stop(pgProblem);
-  if (cfg.RUN_MIGRATIONS === "1") {
-    await migrate(db, { migrationsFolder: cfg.MIGRATIONS_DIR || path.resolve("drizzle") });
-    console.log("database migrations applied");
+  if (cfg.RUN_MIGRATIONS === "1" || cfg.SEED_ON_START === "1") {
+    // Two app instances starting at once (a rolling update on AWS) must not migrate or seed together: a PostgreSQL
+    // advisory lock on its own connection lets one go first; the other waits, then finds nothing left to do.
+    const lock = postgres(cfg.DATABASE_URL, { ...dbOptions(), max: 1 });
+    try {
+      await lock`select pg_advisory_lock(${MIGRATION_LOCK})`;
+      if (cfg.RUN_MIGRATIONS === "1") {
+        await migrate(db, { migrationsFolder: cfg.MIGRATIONS_DIR || path.resolve("drizzle") });
+        log.info("database.migrations_applied");
+      }
+      if (cfg.SEED_ON_START === "1") await seed();
+    } finally {
+      await lock`select pg_advisory_unlock(${MIGRATION_LOCK})`.catch(() => {});
+      await lock.end();
+    }
   }
-  if (cfg.SEED_ON_START === "1") await seed();
+  // Search needs pg_trgm (migration 0000 creates it; on a managed database the admin user may create extensions).
+  const [trgm] = await db.execute<{ ok: boolean }>(sql`select exists (select 1 from pg_extension where extname = 'pg_trgm') as ok`);
+  if (!trgm?.ok) stop("The PostgreSQL extension pg_trgm is not installed in this database. Run the migrations (RUN_MIGRATIONS=1), or as the database admin: CREATE EXTENSION pg_trgm;");
   if (cfg.PURGE_JOB !== "off") startPurgeScheduler();
+  if (cfg.BACKUP_BUCKET) startBackupScheduler();
 } catch (e) {
-  console.error("start-up failed:", e);
+  log.error("startup.failed", { reason: (e as Error).message });
   process.exit(1);
 }
